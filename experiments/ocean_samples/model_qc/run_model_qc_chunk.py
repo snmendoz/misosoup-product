@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import math
 import traceback
 from pathlib import Path
+
+OCEAN_DIR = Path(__file__).resolve().parent.parent
+if str(OCEAN_DIR) not in sys.path:
+    sys.path.insert(0, str(OCEAN_DIR))
 from time import perf_counter
 
 from reframed.solvers.solution import Status
