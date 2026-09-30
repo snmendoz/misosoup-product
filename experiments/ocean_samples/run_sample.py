@@ -95,6 +95,89 @@ def map_stage_d(stage_d: dict, solver_to_mag: dict[str, str]) -> dict:
     return converted
 
 
+def diagnose_individual_growth(
+    models: list,
+    medium_entries: list[dict],
+    params: dict,
+    uptake_bound: float,
+    solver_to_mag: dict[str, str],
+) -> list[dict]:
+    """Estimate each member's maximum growth under the selected medium."""
+
+    diagnostics = []
+
+    for position, model in enumerate(models):
+        solver_id = model.id
+        mag_id = solver_to_mag.get(solver_id, solver_id)
+
+        entry = {
+            "position": int(position),
+            "solver_id": solver_id,
+            "mag_id": mag_id,
+            "biomass_reaction": str(model.biomass_reaction),
+        }
+
+        try:
+            diagnostic_community = LayeredCommunity(
+                f"diagnostic_{position:05d}",
+                [model],
+                copy_models=False,
+                params=params,
+            )
+
+            diagnostic_medium, diagnostic_medium_audit = (
+                resolve_medium_for_community(
+                    diagnostic_community,
+                    medium_entries,
+                    uptake_bound,
+                )
+            )
+
+            diagnostic_community.setup_medium(
+                diagnostic_medium
+            )
+
+            solution = diagnostic_community.solver.solve(
+                objective={"community_growth": 1},
+                get_values=["community_growth"],
+                minimize=False,
+            )
+
+            entry["status"] = str(solution.status)
+            entry["number_medium_tokens_matched"] = int(
+                diagnostic_medium_audit[
+                    "number_matched_tokens"
+                ]
+            )
+            entry["number_medium_tokens_unresolved"] = int(
+                diagnostic_medium_audit[
+                    "number_unresolved_tokens"
+                ]
+            )
+
+            if solution.status == Status.OPTIMAL:
+                entry["max_growth"] = float(
+                    solution.values.get(
+                        "community_growth",
+                        0.0,
+                    )
+                )
+            else:
+                entry["max_growth"] = None
+
+        except Exception as error:
+            entry["status"] = "diagnostic_failed"
+            entry["max_growth"] = None
+            entry["diagnostic_error_type"] = type(
+                error
+            ).__name__
+            entry["diagnostic_error"] = str(error)
+
+        diagnostics.append(entry)
+
+    return diagnostics
+
+
 def main() -> None:
     args = parse_args()
 
@@ -203,21 +286,82 @@ def main() -> None:
         )
         community.setup_medium(medium)
 
-        t = perf_counter()
-        feasibility = community.check_feasibility(["community_growth"])
-        feasibility_time = elapsed(t)
-        if feasibility.status != Status.OPTIMAL:
-            raise RuntimeError(
-                "Full sample community is not feasible under the selected medium "
-                f"at minimal_growth={args.minimal_growth}; "
-                f"solver status={feasibility.status}"
-            )
-
         print(
             f"Medium matched {medium_audit['number_matched_tokens']} / "
             f"{medium_audit['number_tokens']} tokens",
             flush=True,
         )
+
+        t = perf_counter()
+        feasibility = community.check_feasibility(
+            ["community_growth"]
+        )
+        feasibility_time = elapsed(t)
+
+        if feasibility.status != Status.OPTIMAL:
+            individual_growth = diagnose_individual_growth(
+                models=models,
+                medium_entries=medium_entries,
+                params=params,
+                uptake_bound=args.uptake_bound,
+                solver_to_mag=solver_to_mag,
+            )
+
+            diagnostic = {
+                "sample_index": int(args.sample_index),
+                "sample_id": sample_id,
+                "full_community_status": str(
+                    feasibility.status
+                ),
+                "minimal_growth_requirement": float(
+                    args.minimal_growth
+                ),
+                "medium": {
+                    **medium_file_audit,
+                    **medium_audit,
+                },
+                "individual_growth": individual_growth,
+            }
+
+            yaml_dump_atomic(
+                diagnostic,
+                sample_dir
+                / "infeasibility_diagnostic.yaml",
+            )
+
+            print(
+                "Full community infeasible. "
+                "Individual maximum growth under the "
+                "same medium:",
+                flush=True,
+            )
+
+            for entry in individual_growth:
+                max_growth = entry["max_growth"]
+
+                if max_growth is None:
+                    growth_text = "NA"
+                else:
+                    growth_text = f"{max_growth:.8g}"
+
+                print(
+                    f"  {entry['mag_id']}: "
+                    f"biomass={entry['biomass_reaction']} "
+                    f"status={entry['status']} "
+                    f"max_growth={growth_text} "
+                    f"medium={entry.get('number_medium_tokens_matched', 'NA')}/"
+                    f"{medium_audit['number_tokens']}",
+                    flush=True,
+                )
+
+            raise RuntimeError(
+                "Full sample community is not feasible "
+                "under the selected medium at "
+                f"minimal_growth={args.minimal_growth}; "
+                f"solver status={feasibility.status}. "
+                "See infeasibility_diagnostic.yaml for "
+                "per-MAG maximum-growth diagnostics."
+            )
 
         t = perf_counter()
         unfiltered = find_producible_exchanges(
