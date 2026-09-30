@@ -61,8 +61,6 @@ def main() -> None:
         )
         mag_entries = []
         unresolved = []
-        resolved_before_cap = 0
-
         for mag_id, abundance in present.items():
             mag_id = str(mag_id)
             unique_present_mags.add(mag_id)
@@ -90,14 +88,6 @@ def main() -> None:
                 )
 
             model_to_mag[model_key] = mag_id
-            resolved_before_cap += 1
-
-            if (
-                args.max_mags_per_sample is not None
-                and len(mag_entries) >= args.max_mags_per_sample
-            ):
-                continue
-
             resolved_models.add(model_key)
             mag_entries.append(
                 {
@@ -106,6 +96,12 @@ def main() -> None:
                     "model_path": str(model_path),
                 }
             )
+
+            if (
+                args.max_mags_per_sample is not None
+                and len(mag_entries) >= args.max_mags_per_sample
+            ):
+                break
 
         if unresolved:
             unresolved_present_mags[str(sample_id)] = unresolved
@@ -124,9 +120,6 @@ def main() -> None:
                 "index": int(sample_index),
                 "sample_id": str(sample_id),
                 "number_present_mags_in_matrix": int(len(present)),
-                "number_resolvable_mags_before_cap": int(
-                    resolved_before_cap
-                ),
                 "number_modeled_mags": int(len(mag_entries)),
                 "mags": mag_entries,
             }
