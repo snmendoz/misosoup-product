@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+OCEAN_DIR = Path(__file__).resolve().parent.parent
+if str(OCEAN_DIR) not in sys.path:
+    sys.path.insert(0, str(OCEAN_DIR))
 
 from common import (
     build_model_index,
