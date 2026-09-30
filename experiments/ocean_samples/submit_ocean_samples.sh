@@ -11,11 +11,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 usage() {
     cat <<'EOF'
 Usage:
-  submit_ocean_samples.sh ABUNDANCE_MATRIX [TARA_REPO]
+  submit_ocean_samples.sh [ABUNDANCE_MATRIX] [TARA_REPO]
 
-Example:
+By default, the abundance matrix is read from:
+  <TARA_REPO>/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv
+
+Example using the repository defaults:
+  bash experiments/ocean_samples/submit_ocean_samples.sh
+
+Example with explicit paths:
   bash experiments/ocean_samples/submit_ocean_samples.sh \
-    /path/to/abundance_159x1375.tsv \
+    /path/to/CEODOS_MAG_TPMs_IDs_matrix.tsv \
     "$HOME/tara_chile_metabolic_models"
 
 Important environment overrides:
@@ -43,17 +49,18 @@ Optional explicit MAG/model mapping:
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -gt 2 ]]; then
     usage
     exit 2
 fi
 
-MATRIX_PATH="$(readlink -f "$1")"
 DATA_REPO="${2:-${OCEAN_DATA_REPO:-$HOME/tara_chile_metabolic_models}}"
 DATA_REPO="${DATA_REPO/#\~/$HOME}"
 
 MODELS_DIR="${OCEAN_MODELS_DIR:-$DATA_REPO/Models/gapseq/models}"
 MEDIUM_FILE="${OCEAN_MEDIUM_FILE:-$DATA_REPO/Models/gapseq/media/mathomics.txt}"
+DEFAULT_MATRIX="$DATA_REPO/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv"
+MATRIX_INPUT="${1:-${OCEAN_ABUNDANCE_MATRIX:-$DEFAULT_MATRIX}}"
 
 PRESENCE_THRESHOLD="${OCEAN_PRESENCE_THRESHOLD:-0}"
 ALPHA="${OCEAN_ALPHA:-0.20}"
@@ -74,11 +81,6 @@ WLS_SESSIONS="${OCEAN_WLS_SESSIONS:-2}"
 
 MODEL_MAP="${OCEAN_MODEL_MAP:-}"
 
-if [[ ! -f "$MATRIX_PATH" ]]; then
-    echo "ERROR: abundance matrix not found: $MATRIX_PATH" >&2
-    exit 1
-fi
-
 if (( MAX_CONCURRENT > WLS_SESSIONS )); then
     echo "ERROR: OCEAN_MAX_CONCURRENT=$MAX_CONCURRENT exceeds the configured" >&2
     echo "Gurobi WLS session limit OCEAN_WLS_SESSIONS=$WLS_SESSIONS." >&2
@@ -91,6 +93,15 @@ if [[ ! -d "$DATA_REPO" ]]; then
     git clone --depth 1 \
         https://github.com/mathomics/tara_chile_metabolic_models.git \
         "$DATA_REPO"
+fi
+
+MATRIX_PATH="$(readlink -f "$MATRIX_INPUT")"
+
+if [[ ! -f "$MATRIX_PATH" ]]; then
+    echo "ERROR: abundance matrix not found: $MATRIX_PATH" >&2
+    echo "Expected by default:" >&2
+    echo "  $DATA_REPO/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv" >&2
+    exit 1
 fi
 
 if [[ ! -d "$MODELS_DIR" ]]; then
