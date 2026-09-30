@@ -14,7 +14,7 @@ from reframed.solvers.solution import Status
 from reframed.solvers.solver import Parameter
 
 from common import (
-    read_medium_tokens,
+    read_medium_spec,
     resolve_medium_for_community,
     yaml_dump_atomic,
     yaml_load,
@@ -192,10 +192,13 @@ def main() -> None:
             minimal_growth=args.minimal_growth,
         )
 
-        medium_tokens = read_medium_tokens(medium_file)
+        medium_entries, medium_file_audit = read_medium_spec(
+            medium_file,
+            default_uptake_bound=args.uptake_bound,
+        )
         medium, medium_audit = resolve_medium_for_community(
             community,
-            medium_tokens,
+            medium_entries,
             args.uptake_bound,
         )
         community.setup_medium(medium)
@@ -205,7 +208,7 @@ def main() -> None:
         feasibility_time = elapsed(t)
         if feasibility.status != Status.OPTIMAL:
             raise RuntimeError(
-                "Full sample community is not feasible under mathomics.txt "
+                "Full sample community is not feasible under the selected medium "
                 f"at minimal_growth={args.minimal_growth}; "
                 f"solver status={feasibility.status}"
             )
@@ -363,6 +366,7 @@ def main() -> None:
             },
             "medium": {
                 "file": str(medium_file),
+                **medium_file_audit,
                 **medium_audit,
                 "resolved_exchange_bounds": {
                     rid: float(bound)
