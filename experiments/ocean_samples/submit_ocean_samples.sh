@@ -32,6 +32,7 @@ Slurm:
   OCEAN_CPUS_PER_TASK=4
   OCEAN_MEMORY=32G
   OCEAN_MAX_CONCURRENT=2
+  OCEAN_ARRAY_RANGE=0-158   # optional pilot, e.g. 0-3
 
 The default concurrency is 2 because the current Gurobi WLS academic license
 supports two concurrent sessions. Do not increase it unless the license limit
@@ -157,7 +158,8 @@ if [[ "$N_SAMPLES" -lt 1 ]]; then
 fi
 
 ARRAY_LAST=$((N_SAMPLES - 1))
-ARRAY_SPEC="0-${ARRAY_LAST}%${MAX_CONCURRENT}"
+ARRAY_RANGE="${OCEAN_ARRAY_RANGE:-0-${ARRAY_LAST}}"
+ARRAY_SPEC="${ARRAY_RANGE}%${MAX_CONCURRENT}"
 
 export OCEAN_MANIFEST="$MANIFEST"
 export OCEAN_OUTPUT_ROOT="$RUN_ROOT"
