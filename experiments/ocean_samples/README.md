@@ -169,6 +169,28 @@ manifest, submits the 159-element array, limits it to two simultaneous Gurobi
 processes, and submits a collector with `afterany` dependency so aggregation
 runs even if individual samples fail.
 
+## Recommended pilot before the 159-sample run
+
+Because the abundance matrix and `mathomics.txt` were not available while this
+workflow was implemented, first run a small pilot after those files appear:
+
+```bash
+export OCEAN_ARRAY_RANGE=0-3
+bash experiments/ocean_samples/submit_ocean_samples.sh \
+  /absolute/path/to/abundance_159x1375.tsv \
+  "$HOME/tara_chile_metabolic_models"
+```
+
+The concurrency cap is still applied, so this becomes `0-3%2`. The collector
+will mark the other samples as missing in this pilot run; that is expected.
+
+After confirming model-name matching, medium matching, feasibility, memory, and
+per-sample runtime, unset the pilot range and submit all 159 samples:
+
+```bash
+unset OCEAN_ARRAY_RANGE
+```
+
 ## Useful overrides
 
 ```bash
