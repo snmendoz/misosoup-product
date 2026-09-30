@@ -31,6 +31,8 @@ Important environment overrides:
   OCEAN_PRODUCT_RETENTION=0.90
   OCEAN_UPTAKE_BOUND=-1000
   OCEAN_MAX_MIN_COMMS=100
+  OCEAN_MAX_MAGS_PER_SAMPLE=4
+  OCEAN_ALLOW_MISSING_MODELS=1
 
 Slurm:
   OCEAN_PARTITION=general
@@ -72,6 +74,8 @@ PROD_TOL="${OCEAN_PROD_TOL:-1e-6}"
 INT_TOL="${OCEAN_INT_TOL:-1e-9}"
 UPTAKE_BOUND="${OCEAN_UPTAKE_BOUND:--1000}"
 MAX_MIN_COMMS="${OCEAN_MAX_MIN_COMMS:-100}"
+MAX_MAGS_PER_SAMPLE="${OCEAN_MAX_MAGS_PER_SAMPLE:-}"
+ALLOW_MISSING_MODELS="${OCEAN_ALLOW_MISSING_MODELS:-0}"
 
 PARTITION="${OCEAN_PARTITION:-general}"
 TIME_LIMIT="${OCEAN_TIME_LIMIT:-12:00:00}"
@@ -141,6 +145,8 @@ echo "Models              : $MODELS_DIR"
 echo "Medium              : $MEDIUM_FILE"
 echo "Run root            : $RUN_ROOT"
 echo "Presence threshold  : $PRESENCE_THRESHOLD"
+echo "Max MAGs/sample     : ${MAX_MAGS_PER_SAMPLE:-all}"
+echo "Allow missing models: $ALLOW_MISSING_MODELS"
 echo "Partition           : $PARTITION"
 echo "Time limit/task     : $TIME_LIMIT"
 echo "CPUs/task           : $CPUS_PER_TASK"
@@ -156,6 +162,14 @@ PREPARE_ARGS=(
     --expected-samples 159
     --expected-mags 1375
 )
+
+if [[ -n "$MAX_MAGS_PER_SAMPLE" ]]; then
+    PREPARE_ARGS+=(--max-mags-per-sample "$MAX_MAGS_PER_SAMPLE")
+fi
+
+if [[ "$ALLOW_MISSING_MODELS" == "1" ]]; then
+    PREPARE_ARGS+=(--allow-missing-models)
+fi
 
 if [[ -n "$MODEL_MAP" ]]; then
     PREPARE_ARGS+=(--model-map "$MODEL_MAP")
@@ -235,6 +249,8 @@ time_limit=$TIME_LIMIT
 cpus_per_task=$CPUS_PER_TASK
 memory=$MEMORY
 max_concurrent=$MAX_CONCURRENT
+max_mags_per_sample=$MAX_MAGS_PER_SAMPLE
+allow_missing_models=$ALLOW_MISSING_MODELS
 alpha=$ALPHA
 minimal_growth=$MINIMAL_GROWTH
 product_retention=$PRODUCT_RETENTION
