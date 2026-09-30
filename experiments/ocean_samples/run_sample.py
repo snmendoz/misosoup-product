@@ -293,20 +293,99 @@ def main() -> None:
         )
 
         t = perf_counter()
+        individual_growth = diagnose_individual_growth(
+            models=models,
+            medium_entries=medium_entries,
+            params=params,
+            uptake_bound=args.uptake_bound,
+            solver_to_mag=solver_to_mag,
+        )
+        individual_growth_time = elapsed(t)
+
+        for entry in individual_growth:
+            max_growth = entry["max_growth"]
+            passes_threshold = (
+                entry["status"] == str(Status.OPTIMAL)
+                and max_growth is not None
+                and max_growth + args.production_tolerance
+                >= args.minimal_growth
+            )
+            entry["passes_minimal_growth"] = bool(
+                passes_threshold
+            )
+            entry["minimal_growth_requirement"] = float(
+                args.minimal_growth
+            )
+
+        yaml_dump_atomic(
+            {
+                "sample_index": int(args.sample_index),
+                "sample_id": sample_id,
+                "minimal_growth_requirement": float(
+                    args.minimal_growth
+                ),
+                "medium_file": str(medium_file),
+                "individual_growth": individual_growth,
+            },
+            sample_dir / "individual_growth.yaml",
+        )
+
+        print(
+            "Individual maximum growth under the selected medium:",
+            flush=True,
+        )
+
+        for entry in individual_growth:
+            max_growth = entry["max_growth"]
+
+            if max_growth is None:
+                growth_text = "NA"
+            else:
+                growth_text = f"{max_growth:.8g}"
+
+            print(
+                f"  {entry['mag_id']}: "
+                f"biomass={entry['biomass_reaction']} "
+                f"status={entry['status']} "
+                f"max_growth={growth_text} "
+                f"passes={entry['passes_minimal_growth']} "
+                f"medium={entry.get('number_medium_tokens_matched', 'NA')}/"
+                f"{medium_audit['number_tokens']}",
+                flush=True,
+            )
+
+        failing_individual = [
+            entry
+            for entry in individual_growth
+            if not entry["passes_minimal_growth"]
+        ]
+
+        if failing_individual:
+            failed_labels = ", ".join(
+                f"{entry['mag_id']}="
+                + (
+                    "NA"
+                    if entry["max_growth"] is None
+                    else f"{entry['max_growth']:.8g}"
+                )
+                for entry in failing_individual
+            )
+
+            raise RuntimeError(
+                "One or more individual MAG models cannot "
+                f"reach minimal_growth={args.minimal_growth} "
+                "under the selected medium: "
+                + failed_labels
+                + ". See individual_growth.yaml."
+            )
+
+        t = perf_counter()
         feasibility = community.check_feasibility(
             ["community_growth"]
         )
         feasibility_time = elapsed(t)
 
         if feasibility.status != Status.OPTIMAL:
-            individual_growth = diagnose_individual_growth(
-                models=models,
-                medium_entries=medium_entries,
-                params=params,
-                uptake_bound=args.uptake_bound,
-                solver_to_mag=solver_to_mag,
-            )
-
             diagnostic = {
                 "sample_index": int(args.sample_index),
                 "sample_id": sample_id,
@@ -329,38 +408,13 @@ def main() -> None:
                 / "infeasibility_diagnostic.yaml",
             )
 
-            print(
-                "Full community infeasible. "
-                "Individual maximum growth under the "
-                "same medium:",
-                flush=True,
-            )
-
-            for entry in individual_growth:
-                max_growth = entry["max_growth"]
-
-                if max_growth is None:
-                    growth_text = "NA"
-                else:
-                    growth_text = f"{max_growth:.8g}"
-
-                print(
-                    f"  {entry['mag_id']}: "
-                    f"biomass={entry['biomass_reaction']} "
-                    f"status={entry['status']} "
-                    f"max_growth={growth_text} "
-                    f"medium={entry.get('number_medium_tokens_matched', 'NA')}/"
-                    f"{medium_audit['number_tokens']}",
-                    flush=True,
-                )
-
             raise RuntimeError(
-                "Full sample community is not feasible "
-                "under the selected medium at "
+                "All individual MAGs reach the minimum growth "
+                "threshold, but the full sample community is "
+                "not feasible under the selected medium at "
                 f"minimal_growth={args.minimal_growth}; "
                 f"solver status={feasibility.status}. "
-                "See infeasibility_diagnostic.yaml for "
-                "per-MAG maximum-growth diagnostics."
+                "See infeasibility_diagnostic.yaml."
             )
 
         t = perf_counter()
@@ -517,6 +571,7 @@ def main() -> None:
                     for rid, bound in medium.items()
                 },
             },
+            "individual_growth": individual_growth,
             "individual_product_maxima": {
                 "number_unfiltered_producible_exchanges": len(unfiltered),
                 "number_filtered_products": len(filtered),
@@ -564,6 +619,7 @@ def main() -> None:
             "timing_seconds": {
                 "model_loading": model_loading,
                 "community_build": community_build,
+                "individual_growth_check": individual_growth_time,
                 "full_community_feasibility": feasibility_time,
                 "individual_product_scan": scan_time,
                 "stage_a": stage_a_time,
