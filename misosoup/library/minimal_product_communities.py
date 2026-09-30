@@ -566,10 +566,19 @@ def findMinimalProductCommunities(
         )
 
         # No more feasible solution of size N_min:
-        # enumeration is complete.
-        if solution.status != Status.OPTIMAL:
+        # enumeration is complete only when the solver explicitly proves
+        # infeasibility. Other statuses (for example numerical failure or a
+        # time limit) must not be silently misclassified as exhaustive
+        # enumeration.
+        if solution.status == Status.INFEASIBLE:
             enumeration_complete = True
             break
+
+        if solution.status != Status.OPTIMAL:
+            raise RuntimeError(
+                "Stage D enumeration stopped before completion. "
+                f"Solver status: {solution.status}"
+            )
 
         selected = _selected_organisms(
             solution,
