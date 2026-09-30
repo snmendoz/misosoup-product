@@ -632,11 +632,17 @@ else:
 # STAGE C
 # ======================================================================
 #
-# Fix the Stage-B product set S_B.
+# Rebuild the Stage-B product set S_B in a FRESH LayeredCommunity.
 #
 # Preserve exactly the objective optimized in Stage B:
 #
 #     sum_i q_i >= Q* - epsilon
+#
+# Diagnostic sequence:
+#
+#     C0 = fresh biological model before split variables
+#     C1 = split representation added, no pFBA objective
+#     C2 = pFBA minimization
 #
 # Then solve classical split-flux pFBA:
 #
@@ -655,10 +661,33 @@ print("=" * 70)
 
 stage_c_start = perf_counter()
 
+# Stage C intentionally uses a NEW community/solver.
+#
+# The A/B solver contains z_i variables, q_i variables, indicators and
+# the K* constraint. None of those solver objects is inherited by Stage C.
+stage_c_community = LayeredCommunity(
+    "stage_c_reference",
+    models,
+    copy_models=False,
+    params={
+        Parameter.OPTIMALITY_TOL: (
+            PRODUCTION_TOLERANCE
+        ),
+        Parameter.FEASIBILITY_TOL: (
+            PRODUCTION_TOLERANCE
+        ),
+        Parameter.INT_FEASIBILITY_TOL: (
+            INTEGER_TOLERANCE
+        ),
+    },
+)
+
 stage_c = solvepFBAUsingFixProducts(
-    community=community,
+    community=stage_c_community,
     stage_b=stage_b,
     product_selection=product_selection,
+    medium=medium,
+    minimal_growth=MINIMAL_GROWTH,
     lexicographic_tolerance=LEXICOGRAPHIC_TOLERANCE,
     tolerance=PRODUCTION_TOLERANCE,
     check_feasibility=True,

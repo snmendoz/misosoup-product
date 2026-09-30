@@ -44,9 +44,13 @@ solvepFBAUsingFixProducts()
 
 Important
 ---------
-These functions mutate the solver contained in ``community``. They must
-therefore be called sequentially, in the order A -> B.1 -> B.2 -> C, on
-the same fresh LayeredCommunity object.
+Stages A and B mutate one reference-community solver and must be called
+sequentially on that same ``LayeredCommunity`` object.
+
+Stage C is intentionally different: it must receive a NEW
+``LayeredCommunity`` containing the same organisms. Only the numerical
+Stage-B result is transferred into Stage C. This isolates the pFBA
+reference problem from the Stage-A/Stage-B MILP machinery.
 """
 
 import logging
@@ -58,7 +62,7 @@ from gurobipy import GRB
 from reframed.solvers.solution import Status
 from reframed.solvers.solver import VarType
 
-from ..reframed.layered_community import LayeredCommunity
+from ..reframed.layered_community import LayeredCommunity, BOUND_INF
 
 
 # ======================================================================
@@ -708,111 +712,45 @@ def solvepFBAUsingFixProducts(
     community: LayeredCommunity,
     stage_b: dict,
     product_selection: dict,
+    medium: dict,
+    minimal_growth: float = 0.01,
     lexicographic_tolerance: float = 1e-5,
     tolerance: float = 1e-6,
     check_feasibility: bool = True,
 ) -> dict:
-    """Stage C: fix the Stage-B product set and solve pFBA.
+    """Stage C: rebuild the selected-product reference problem and run pFBA.
 
-    Stage B solved the secondary optimization problem:
+    This function deliberately receives a FRESH ``LayeredCommunity``.
 
-        Q* = max sum_i q_i
+    Stages A/B determine the biological reference quantities:
 
-    subject to the Stage-A product constraints and:
+        S_B     selected product identities
+        M_i     individual maximum secretion
+        alpha   Stage-A production fraction
+        Q*      optimum of the Stage-B normalized-production objective
 
-        sum_i z_i = K*
-        q_i <= z_i
-        z_i = 1  =>  v_i >= M_i q_i
+    Stage C transfers only those numerical results. It does NOT inherit
+    product z_i binaries, Stage-A indicators, Stage-B q_i variables,
+    Stage-B indicators, or previous Stage-C constraints.
 
-    Stage C fixes the identities selected in Stage B and preserves the
-    Stage-B objective lexicographically:
+    Diagnostic checkpoints:
 
+        C0: fresh biological problem before split variables
+        C1: split variables/equalities added, no pFBA objective
+        C2: pFBA minimization
+
+    The formulation is:
+
+        all y_j = 1
+        v_i >= alpha M_i
+        0 <= q_i <= 1
+        v_i >= M_i q_i
         sum_i q_i >= Q* - epsilon
 
-    where:
-
-        epsilon = lexicographic_tolerance
-
-    This is intentionally different from reconstructing the Stage-B
-    objective as:
-
-        sum_i v_i / M_i
-
-    because Stage B optimized q_i, not v_i / M_i. Reusing the same q_i
-    variables preserves exactly the objective that was optimized in Stage B.
-
-    Importantly, Stage C does NOT add a second explicit constraint
-
-        v_i >= alpha M_i
-
-    for selected products. That condition is already present through the
-    Stage-A indicator constraint:
-
-        z_i = 1  =>  v_i >= alpha M_i
-
-    and z_i is fixed to its Stage-B value in Stage C. Avoiding a duplicate
-    linear version of this constraint prevents us from accidentally making
-    Stage C numerically stricter than Stage B.
-
-    Classical split-flux pFBA
-    --------------------------
-
-    For every metabolic reaction r introduce two non-negative variables:
-
-        v_r^+ >= 0
-        v_r^- >= 0
-
-    linked to the original reaction flux by:
-
         v_r = v_r^+ - v_r^-
+        v_r^+, v_r^- >= 0
 
-    or equivalently:
-
-        v_r - v_r^+ + v_r^- = 0
-
-    Stage C then solves:
-
-        min sum_r (v_r^+ + v_r^-)
-
-    At optimum:
-
-        v_r^+ + v_r^- = |v_r|
-
-    so this is equivalent to:
-
-        min sum_r |v_r|
-
-    Parameters
-    ----------
-    community
-        The same LayeredCommunity used by Stages A and B. It already
-        contains the Stage-A and Stage-B variables and constraints.
-
-    stage_b
-        State dictionary returned by ``maximizeProducts``.
-
-    product_selection
-        Dictionary returned by
-        ``getSelectedProductsFromProductMaximization``.
-
-    lexicographic_tolerance
-        epsilon in:
-
-            sum_i q_i >= Q* - epsilon
-
-        Default: 1e-5.
-
-    tolerance
-        Numerical tolerance used for final validation.
-
-    check_feasibility
-        If True, solve a feasibility problem after fixing the products and
-        imposing the lexicographic floor, but before adding pFBA variables.
-
-    Returns
-    -------
-    dict
-        Final product reference fluxes and pFBA diagnostics.
+        min sum_r(v_r^+ + v_r^-)
     """
 
     if lexicographic_tolerance < 0:
@@ -820,178 +758,218 @@ def solvepFBAUsingFixProducts(
             "lexicographic_tolerance must be >= 0."
         )
 
+    if minimal_growth <= 0:
+        raise ValueError(
+            "minimal_growth must be > 0."
+        )
+
+    if tolerance < 0:
+        raise ValueError(
+            "tolerance must be >= 0."
+        )
+
+    if community.has_binary_variables:
+        raise ValueError(
+            "Stage C requires a fresh LayeredCommunity. "
+            "The supplied community already has binary variables."
+        )
+
     products = stage_b["products"]
-    product_ids = stage_b["product_ids"]
-    product_variables = stage_b["product_variables"]
-    normalized_variables = stage_b["normalized_variables"]
-    q_star = stage_b["q_star"]
-    k_star = stage_b["k_star"]
+    thresholds = stage_b["thresholds"]
+    q_star = float(stage_b["q_star"])
+    k_star = int(stage_b["k_star"])
 
-    selected_products = product_selection[
-        "selected_products"
-    ]
+    selected_products = list(
+        product_selection["selected_products"]
+    )
 
-    selected_set = set(selected_products)
-
-    if len(selected_set) != k_star:
+    if len(selected_products) != k_star:
         raise RuntimeError(
             "Stage C received an unexpected product count: "
-            f"{len(selected_set)} instead of K*={k_star}."
+            f"{len(selected_products)} instead of K*={k_star}."
         )
 
-    # ==================================================================
-    # C.1 FIX THE PRODUCT IDENTITIES SELECTED BY STAGE B
-    # ==================================================================
-    #
-    # Stage B was allowed to choose which K* products were active.
-    # Stage C must not change that biological decision.
-    #
-    # Therefore:
-    #
-    #     z_i = 1   for products selected in Stage B
-    #     z_i = 0   for all other candidate products
-    #
-    # The original Stage-A indicator constraints remain active, so fixing
-    # z_i = 1 automatically preserves:
-    #
-    #     v_i >= alpha M_i
-    #
-    # without adding a numerically different duplicate constraint.
-    # ==================================================================
-
-    for index, rid in enumerate(product_ids):
-        z_name = product_variables[rid]
-
-        fixed_value = (
-            1
-            if rid in selected_set
-            else 0
+    if len(set(selected_products)) != len(selected_products):
+        raise RuntimeError(
+            "Stage C received duplicated product IDs."
         )
 
-        community.solver.add_constraint(
-            f"c_stageC_fix_z_{index}_{_safe_name(rid)}",
-            {
-                z_name: 1,
-            },
-            "=",
-            fixed_value,
-        )
+    # Recreate the same organism activity/growth coupling used by A/B.
+    community.setup_binary_variables(
+        minimal_growth
+    )
+
+    community.setup_medium(
+        medium
+    )
+
+    organism_expression = {
+        f"y_{org_id}": 1
+        for org_id in community.organisms
+    }
+
+    # Force the complete reference community:
+    #
+    #     sum_j y_j = N
+    #
+    # Since every y_j is binary, all organisms are active.
+    community.solver.add_constraint(
+        "c_stageC_full_community",
+        organism_expression,
+        "=",
+        len(organism_expression),
+    )
 
     community.solver.update()
 
-    # ==================================================================
-    # C.2 LEXICOGRAPHIC RETENTION OF THE STAGE-B OBJECTIVE
-    # ==================================================================
+    # Fresh q_i variables only for products selected by Stage B.
+    normalized_variables = {}
+
+    for index, rid in enumerate(selected_products):
+
+        if rid not in community.merged_model.reactions:
+            raise KeyError(
+                f"Selected product {rid} is absent from the fresh "
+                "Stage-C community."
+            )
+
+        if rid not in products:
+            raise KeyError(
+                f"Selected product {rid} is absent from Stage-B products."
+            )
+
+        if rid not in thresholds:
+            raise KeyError(
+                f"Selected product {rid} is absent from Stage-B thresholds."
+            )
+
+        maximum = float(
+            products[rid]
+        )
+
+        if maximum <= tolerance:
+            raise ValueError(
+                f"Selected product {rid} has invalid M_i={maximum}."
+            )
+
+        q_name = (
+            f"stageC_q_{index}_"
+            f"{_safe_name(rid)}"
+        )
+
+        community.solver.add_variable(
+            q_name,
+            0,
+            1,
+            vartype=VarType.CONTINUOUS,
+        )
+
+        normalized_variables[rid] = q_name
+
+    community.solver.update()
+
+    # Fixed-z=1 forms of the Stage-A and Stage-B product constraints:
     #
-    # Stage B optimized:
-    #
-    #     Q* = max sum_i q_i
-    #
-    # Therefore Stage C preserves exactly that objective, allowing only
-    # a small numerical degradation epsilon:
-    #
-    #     sum_i q_i >= Q* - epsilon
-    #
-    # This is the standard lexicographic idea:
-    #
-    #   1. optimize the higher-priority objective,
-    #   2. preserve it within a numerical tolerance,
-    #   3. optimize the lower-priority objective.
-    #
-    # Since Stage B already contains:
-    #
-    #     q_i <= z_i
-    #
-    # and all unselected products now have z_i = 0, their q_i variables
-    # are automatically forced to zero. Consequently, summing over all
-    # q_i is exactly the same Stage-B objective.
-    # ==================================================================
+    #     v_i >= alpha M_i
+    #     v_i >= M_i q_i
+    for index, rid in enumerate(selected_products):
+
+        maximum = float(
+            products[rid]
+        )
+
+        threshold = float(
+            thresholds[rid]
+        )
+
+        q_name = normalized_variables[rid]
+
+        community.solver.add_constraint(
+            (
+                f"c_stageC_product_threshold_"
+                f"{index}_{_safe_name(rid)}"
+            ),
+            {
+                rid: 1,
+            },
+            ">",
+            threshold,
+        )
+
+        community.solver.add_constraint(
+            (
+                f"c_stageC_q_link_"
+                f"{index}_{_safe_name(rid)}"
+            ),
+            {
+                rid: 1,
+                q_name: -maximum,
+            },
+            ">",
+            0,
+        )
 
     q_floor = max(
         0.0,
         q_star - lexicographic_tolerance,
     )
 
-    q_expression = {
-        q_name: 1
-        for q_name in normalized_variables.values()
-    }
-
     community.solver.add_constraint(
         "c_stageC_preserve_stageB_objective",
-        q_expression,
+        {
+            q_name: 1
+            for q_name in normalized_variables.values()
+        },
         ">",
         q_floor,
     )
 
     community.solver.update()
 
+    product_and_q_values = (
+        selected_products
+        + list(normalized_variables.values())
+    )
+
     logging.info(
-        "Stage C: fixed %i selected products.",
+        "Stage C fresh model: %i selected products.",
         len(selected_products),
     )
 
     logging.info(
-        "Stage C: preserving Stage-B objective with epsilon = %.12g.",
-        lexicographic_tolerance,
-    )
-
-    logging.info(
-        "Stage C: sum(q_i) >= Q* - epsilon = %.12g.",
+        "Stage C fresh model: sum(q_i) >= %.12g.",
         q_floor,
     )
 
-    # ==================================================================
-    # C.3 C0 FEASIBILITY CHECK
-    # ==================================================================
-    #
-    # Before adding any pFBA variables, verify that:
-    #
-    #     - the Stage-B product identities are fixed, and
-    #     - sum_i q_i >= Q* - epsilon
-    #
-    # remains feasible.
-    #
-    # If C0 fails, the problem is unrelated to the split-flux pFBA
-    # representation.
-    # ==================================================================
-
+    # --------------------------------------------------------------
+    # C0: fresh biological model before split variables.
+    # --------------------------------------------------------------
     if check_feasibility:
         logging.info(
-            "Stage C0: checking feasibility before adding pFBA variables."
+            "Stage C0: checking fresh biological model before split variables."
         )
 
         c0_solution = community.solver.solve(
             objective={},
-            get_values=False,
+            get_values=product_and_q_values,
             minimize=True,
         )
 
         if c0_solution.status != Status.OPTIMAL:
             _raise_with_iis(
                 community=community,
-                stage_name="Stage C0",
-                filename="stage_c0_iis.ilp",
+                stage_name="Stage C0 fresh model",
+                filename="stage_c0_fresh_iis.ilp",
                 status=c0_solution.status,
             )
 
         logging.info(
-            "Stage C0 is feasible."
+            "Stage C0 fresh model is feasible."
         )
 
-    # ==================================================================
-    # C.4 CREATE CLASSICAL SPLIT-FLUX VARIABLES
-    # ==================================================================
-    #
-    # For every reaction r:
-    #
-    #     v_r^+ >= 0
-    #     v_r^- >= 0
-    #
-    # These variables represent the forward and reverse contributions to
-    # the net reaction flux.
-    # ==================================================================
-
+    # --------------------------------------------------------------
+    # Add classical split-flux variables.
+    # --------------------------------------------------------------
     reaction_ids = sorted(
         community.merged_model.reactions.keys()
     )
@@ -1000,25 +978,76 @@ def solvepFBAUsingFixProducts(
     negative_variables = {}
 
     logging.info(
-        "Stage C: creating split-flux variables for %i reactions.",
+        "Stage C: creating split variables for %i reactions.",
         len(reaction_ids),
     )
 
     for index, rid in enumerate(reaction_ids):
+
         positive_name = f"pfba_pos_{index}"
         negative_name = f"pfba_neg_{index}"
+
+        reaction = community.merged_model.reactions[rid]
+
+        # Use finite, reaction-aware bounds for the split variables.
+        #
+        # If:
+        #
+        #     lb_r <= v_r <= ub_r
+        #
+        # and:
+        #
+        #     v_r = v_r^+ - v_r^-
+        #
+        # then:
+        #
+        #     0 <= v_r^+ <= max(0, ub_r)
+        #     0 <= v_r^- <= max(0, -lb_r)
+        #
+        # Infinite model bounds are replaced with MiSoSoup's own
+        # practical bound convention, BOUND_INF=1000.
+        lower_bound = float(reaction.lb)
+        upper_bound = float(reaction.ub)
+
+        if math.isinf(lower_bound):
+            effective_lower = (
+                -BOUND_INF
+                if lower_bound < 0
+                else BOUND_INF
+            )
+        else:
+            effective_lower = lower_bound
+
+        if math.isinf(upper_bound):
+            effective_upper = (
+                BOUND_INF
+                if upper_bound > 0
+                else -BOUND_INF
+            )
+        else:
+            effective_upper = upper_bound
+
+        positive_upper = max(
+            0.0,
+            effective_upper,
+        )
+
+        negative_upper = max(
+            0.0,
+            -effective_lower,
+        )
 
         community.solver.add_variable(
             positive_name,
             0,
-            math.inf,
+            positive_upper,
             vartype=VarType.CONTINUOUS,
         )
 
         community.solver.add_variable(
             negative_name,
             0,
-            math.inf,
+            negative_upper,
             vartype=VarType.CONTINUOUS,
         )
 
@@ -1027,29 +1056,14 @@ def solvepFBAUsingFixProducts(
 
     community.solver.update()
 
-    # ==================================================================
-    # C.5 LINK NET FLUX TO THE TWO NON-NEGATIVE VARIABLES
-    # ==================================================================
-    #
-    # For every reaction:
-    #
-    #     v_r = v_r^+ - v_r^-
-    #
-    # written as the linear equality:
-    #
-    #     v_r - v_r^+ + v_r^- = 0
-    # ==================================================================
-
     for index, rid in enumerate(reaction_ids):
-        positive_name = positive_variables[rid]
-        negative_name = negative_variables[rid]
 
         community.solver.add_constraint(
             f"c_pfba_split_flux_{index}",
             {
                 rid: 1,
-                positive_name: -1,
-                negative_name: 1,
+                positive_variables[rid]: -1,
+                negative_variables[rid]: 1,
             },
             "=",
             0,
@@ -1057,26 +1071,35 @@ def solvepFBAUsingFixProducts(
 
     community.solver.update()
 
-    # ==================================================================
-    # C.6 pFBA OBJECTIVE
-    # ==================================================================
-    #
-    # Solve:
-    #
-    #     min sum_r (v_r^+ + v_r^-)
-    #
-    # Because both split variables have positive objective coefficients,
-    # the optimizer has no incentive to make both non-zero simultaneously.
-    #
-    # Therefore, at optimum:
-    #
-    #     v_r^+ + v_r^- = |v_r|
-    #
-    # and this objective is equivalent to:
-    #
-    #     min sum_r |v_r|
-    # ==================================================================
+    # --------------------------------------------------------------
+    # C1: split representation added, still no pFBA objective.
+    # --------------------------------------------------------------
+    if check_feasibility:
+        logging.info(
+            "Stage C1: checking feasibility after split-flux constraints."
+        )
 
+        c1_solution = community.solver.solve(
+            objective={},
+            get_values=product_and_q_values,
+            minimize=True,
+        )
+
+        if c1_solution.status != Status.OPTIMAL:
+            _raise_with_iis(
+                community=community,
+                stage_name="Stage C1 fresh split-flux model",
+                filename="stage_c1_fresh_iis.ilp",
+                status=c1_solution.status,
+            )
+
+        logging.info(
+            "Stage C1 fresh split-flux model is feasible."
+        )
+
+    # --------------------------------------------------------------
+    # C2: actual pFBA objective.
+    # --------------------------------------------------------------
     pfba_objective = {}
 
     for rid in reaction_ids:
@@ -1088,44 +1111,23 @@ def solvepFBAUsingFixProducts(
             negative_variables[rid]
         ] = 1
 
-    # Retrieve product fluxes, z_i values, and q_i values so that we can
-    # validate the final lexicographic solution explicitly.
-    values_to_get = (
-        product_ids
-        + list(product_variables.values())
-        + list(normalized_variables.values())
-    )
-
     logging.info(
-        "Stage C: solving classical split-flux pFBA."
+        "Stage C2: minimizing total split flux."
     )
 
     solution = community.solver.solve(
         objective=pfba_objective,
-        get_values=values_to_get,
+        get_values=product_and_q_values,
         minimize=True,
     )
 
     if solution.status != Status.OPTIMAL:
         _raise_with_iis(
             community=community,
-            stage_name="Stage C pFBA",
-            filename="stage_c_pfba_iis.ilp",
+            stage_name="Stage C2 fresh pFBA",
+            filename="stage_c2_fresh_pfba_iis.ilp",
             status=solution.status,
         )
-
-    # ==================================================================
-    # C.7 VALIDATE THE STAGE-B OBJECTIVE AFTER pFBA
-    # ==================================================================
-    #
-    # Reconstruct:
-    #
-    #     Q_C = sum_i q_i
-    #
-    # and verify:
-    #
-    #     Q_C >= Q* - epsilon
-    # ==================================================================
 
     stage_c_q_sum = sum(
         solution.values.get(
@@ -1135,41 +1137,45 @@ def solvepFBAUsingFixProducts(
         for q_name in normalized_variables.values()
     )
 
-    if (
-        stage_c_q_sum
-        + tolerance
-        < q_floor
-    ):
+    if stage_c_q_sum + tolerance < q_floor:
         raise RuntimeError(
             "Stage C solution does not preserve the Stage-B objective. "
             f"Observed sum(q_i)={stage_c_q_sum}, "
             f"required>={q_floor}."
         )
 
-    # ==================================================================
-    # C.8 EXTRACT FINAL REFERENCE PRODUCT FLUXES
-    # ==================================================================
-
     reference_products = {}
 
     for rid in selected_products:
-        flux = solution.values.get(
-            rid,
-            0.0,
+
+        flux = float(
+            solution.values.get(
+                rid,
+                0.0,
+            )
         )
 
-        q_value = solution.values.get(
-            normalized_variables[rid],
-            0.0,
+        q_value = float(
+            solution.values.get(
+                normalized_variables[rid],
+                0.0,
+            )
         )
 
         reference_products[rid] = {
-            "max_individual": products[rid],
-            "required_fraction": stage_b["fraction"],
-            "required_flux": stage_b["thresholds"][rid],
+            "max_individual": float(
+                products[rid]
+            ),
+            "required_fraction": float(
+                stage_b["fraction"]
+            ),
+            "required_flux": float(
+                thresholds[rid]
+            ),
             "reference_flux": flux,
             "normalized_flux": (
-                flux / products[rid]
+                flux
+                / float(products[rid])
             ),
             "q_value": q_value,
         }
@@ -1179,22 +1185,14 @@ def solvepFBAUsingFixProducts(
     )
 
     logging.info(
-        "Stage C pFBA objective: %.12g",
+        "Stage C2 pFBA objective: %.12g",
         pfba_objective_value,
     )
 
     logging.info(
-        "Stage C retained sum(q_i): %.12g",
+        "Stage C2 retained sum(q_i): %.12g",
         stage_c_q_sum,
     )
-
-    exchange_fluxes = {
-        rid: solution.values.get(
-            rid,
-            0.0,
-        )
-        for rid in product_ids
-    }
 
     return {
         "selected_products": selected_products,
@@ -1204,6 +1202,14 @@ def solvepFBAUsingFixProducts(
         "stage_b_objective_floor": q_floor,
         "stage_c_q_sum": stage_c_q_sum,
         "pfba_objective": pfba_objective_value,
-        "exchange_fluxes": exchange_fluxes,
+        "exchange_fluxes": {
+            rid: float(
+                solution.values.get(
+                    rid,
+                    0.0,
+                )
+            )
+            for rid in selected_products
+        },
         "stage_c_solution": solution,
     }
