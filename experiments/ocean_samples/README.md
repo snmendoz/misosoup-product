@@ -39,14 +39,25 @@ Expected model directory:
 Models/gapseq/models/
 ```
 
-Expected medium:
+Final expected medium:
 
 ```text
 Models/gapseq/media/mathomics.txt
 ```
 
-`mathomics.txt` must contain one metabolite per row and no header. By default
-each listed metabolite is opened for uptake with lower bound `-1000`. The bound
+Until that file is added to the TARA Chile repository, the workflow falls back
+automatically to the temporary medium bundled in MiSoSoup:
+
+```text
+experiments/ocean_samples/media/complex_media_gapseq2.csv
+```
+
+The temporary CSV contains 125 compounds with columns `compound`, `name`, and
+`maxFlux`. Its `maxFlux` values are used directly as uptake magnitudes; for
+example `maxFlux = 10` becomes a global-exchange lower bound of `-10`.
+
+The future `mathomics.txt` format is also supported: one metabolite per row and
+no header. Headerless entries use the fallback uptake lower bound `-1000`, which
 can be changed with `OCEAN_UPTAKE_BOUND`.
 
 The abundance matrix is already available in the TARA Chile repository at:
@@ -154,7 +165,7 @@ cd ~/misosoup_product
 git pull origin main
 ```
 
-Once `mathomics.txt` is available, the repository defaults are sufficient:
+The repository defaults are now sufficient even before `mathomics.txt` is uploaded:
 
 ```bash
 bash experiments/ocean_samples/submit_ocean_samples.sh
@@ -165,7 +176,7 @@ This uses:
 ```text
 ~/tara_chile_metabolic_models/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv
 ~/tara_chile_metabolic_models/Models/gapseq/models/
-~/tara_chile_metabolic_models/Models/gapseq/media/mathomics.txt
+~/tara_chile_metabolic_models/Models/gapseq/media/mathomics.txt  # preferred when present
 ```
 
 You can still override the matrix or repository path explicitly if needed.
