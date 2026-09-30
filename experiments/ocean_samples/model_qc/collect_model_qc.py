@@ -44,6 +44,7 @@ def main() -> None:
             result = yaml_load(result_path)
             selected = result["selected_medium"]
             rich = result["rich_medium"]
+            rescue = result.get("rescue")
             diagnostic_class = str(
                 result["diagnostic_class"]
             )
@@ -79,6 +80,19 @@ def main() -> None:
                     "rich_global_exchanges_opened": rich[
                         "number_global_exchanges_opened"
                     ],
+                    "rescue_size": (
+                        rescue.get("minimum_supplement_count")
+                        if rescue is not None
+                        else ""
+                    ),
+                    "rescue_supplements": (
+                        ";".join(
+                            supplement["exchange_reaction"]
+                            for supplement in rescue.get("supplements", [])
+                        )
+                        if rescue is not None
+                        else ""
+                    ),
                     "elapsed_seconds": result[
                         "elapsed_seconds"
                     ],
@@ -106,6 +120,8 @@ def main() -> None:
                     "rich_medium_max_growth": "",
                     "grows_in_rich_medium": "",
                     "rich_global_exchanges_opened": "",
+                    "rescue_size": "",
+                    "rescue_supplements": "",
                     "elapsed_seconds": failure.get(
                         "elapsed_seconds",
                         "",
@@ -142,6 +158,8 @@ def main() -> None:
                     "rich_medium_max_growth": "",
                     "grows_in_rich_medium": "",
                     "rich_global_exchanges_opened": "",
+                    "rescue_size": "",
+                    "rescue_supplements": "",
                     "elapsed_seconds": "",
                     "error_type": "",
                     "error": "",
@@ -166,6 +184,8 @@ def main() -> None:
         "rich_medium_max_growth",
         "grows_in_rich_medium",
         "rich_global_exchanges_opened",
+        "rescue_size",
+        "rescue_supplements",
         "elapsed_seconds",
         "error_type",
         "error",
