@@ -62,8 +62,12 @@ def _normalize_metabolite_id(metabolite_id: str) -> str:
     if value.startswith("M_"):
         value = value[2:]
 
-    if value.endswith("_e"):
-        value = value[:-2]
+    # BiGG/ReFramed models commonly use "_e"; gapseq models often use
+    # "_e0" for the extracellular compartment. Strip the longer suffix first.
+    for suffix in ("_e0", "_e"):
+        if value.endswith(suffix):
+            value = value[:-len(suffix)]
+            break
 
     return value.lower()
 
