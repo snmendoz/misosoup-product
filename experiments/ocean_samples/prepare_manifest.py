@@ -40,8 +40,33 @@ def main() -> None:
         raise ValueError("--max-mags-per-sample must be >= 1 or omitted.")
 
     print(f"Reading abundance matrix: {matrix_path}", flush=True)
-    frame = read_abundance_matrix(matrix_path, expected_samples=args.expected_samples, expected_mags=args.expected_mags)
-    print(f"Matrix shape after orientation check: {frame.shape[0]} samples x {frame.shape[1]} MAGs", flush=True)
+    frame = read_abundance_matrix(
+        matrix_path,
+        expected_samples=args.expected_samples,
+        expected_mags=args.expected_mags,
+    )
+    print(
+        f"Matrix shape after orientation check: "
+        f"{frame.shape[0]} samples x {frame.shape[1]} MAGs",
+        flush=True,
+    )
+    print(
+        "Detected matrix orientation: "
+        f"{frame.attrs.get('detected_orientation', 'unknown')}",
+        flush=True,
+    )
+    if frame.attrs.get("mag_id_column"):
+        print(
+            "Detected MAG ID column: "
+            f"{frame.attrs['mag_id_column']}",
+            flush=True,
+        )
+    if frame.attrs.get("sample_id_column"):
+        print(
+            "Detected sample ID column: "
+            f"{frame.attrs['sample_id_column']}",
+            flush=True,
+        )
 
     model_paths = discover_model_files(models_dir)
     exact_index, normalized_index = build_model_index(model_paths)
