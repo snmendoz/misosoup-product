@@ -15,7 +15,7 @@ if str(OCEAN_DIR) not in sys.path:
 from time import perf_counter
 
 from reframed.solvers.solution import Status
-from reframed.solvers.solver import Parameter
+from reframed.solvers.solver import Parameter, VarType
 
 from common import (
     read_medium_spec,
@@ -105,6 +105,56 @@ def solve_max_growth(
     }
 
 
+def _global_exchanges(community) -> list[str]:
+    return [
+        rid
+        for rid in community.merged_model.reactions
+        if rid.startswith("R_EX_")
+        and not rid.endswith("_i")
+    ]
+
+
+def _forbidden_rescue_exchanges(model, community) -> set[str]:
+    """Never permit direct uptake through the model's biomass exchange."""
+
+    forbidden = set()
+    biomass_reaction = str(model.biomass_reaction)
+
+    if biomass_reaction in community.merged_model.reactions:
+        if biomass_reaction.startswith("R_EX_"):
+            forbidden.add(biomass_reaction)
+
+    return forbidden
+
+
+def _exchange_metadata(community, rid: str) -> dict:
+    reaction = community.merged_model.reactions[rid]
+    metabolite_id = None
+    metabolite_name = None
+
+    if len(reaction.stoichiometry) == 1:
+        metabolite_id = next(iter(reaction.stoichiometry))
+        metabolite = community.merged_model.metabolites.get(
+            metabolite_id
+        )
+        if metabolite is not None:
+            metabolite_name = getattr(
+                metabolite,
+                "name",
+                None,
+            )
+
+    return {
+        "exchange_reaction": rid,
+        "metabolite_id": metabolite_id,
+        "metabolite_name": (
+            str(metabolite_name)
+            if metabolite_name is not None
+            else None
+        ),
+    }
+
+
 def solve_rich_growth(
     model,
     community_id: str,
@@ -118,16 +168,16 @@ def solve_rich_growth(
         params=params,
     )
 
-    global_exchanges = [
-        rid
-        for rid in community.merged_model.reactions
-        if rid.startswith("R_EX_")
-        and not rid.endswith("_i")
-    ]
+    global_exchanges = _global_exchanges(community)
+    forbidden = _forbidden_rescue_exchanges(
+        model,
+        community,
+    )
 
     rich_medium = {
         rid: float(rich_uptake_bound)
         for rid in global_exchanges
+        if rid not in forbidden
     }
 
     community.setup_medium(rich_medium)
@@ -152,11 +202,207 @@ def solve_rich_growth(
         "status": str(solution.status),
         "max_growth": growth,
         "number_global_exchanges_opened": len(
-            global_exchanges
+            rich_medium
         ),
         "uptake_bound": float(
             rich_uptake_bound
         ),
+        "forbidden_exchanges": sorted(forbidden),
+        "biomass_exchange_excluded": (
+            str(model.biomass_reaction) in forbidden
+        ),
+    }
+
+
+def solve_minimal_rescue(
+    model,
+    community_id: str,
+    medium_entries: list[dict],
+    params: dict,
+    fallback_uptake_bound: float,
+    rich_uptake_bound: float,
+    minimal_growth: float,
+) -> dict:
+    """Find a minimum-cardinality set of extra uptake exchanges.
+
+    Existing medium exchanges keep their original bounds. Every other
+    non-biomass global exchange receives a binary variable z_i:
+
+        z_i = 0  =>  v_i >= 0
+        z_i = 1  =>  v_i >= rich_uptake_bound
+
+    The MILP minimizes sum(z_i) subject to community_growth >= the requested
+    minimum growth threshold.
+    """
+
+    community = LayeredCommunity(
+        community_id,
+        [model],
+        copy_models=False,
+        params=params,
+    )
+
+    current_medium, medium_audit = resolve_medium_for_community(
+        community,
+        medium_entries,
+        fallback_uptake_bound,
+    )
+
+    global_exchanges = _global_exchanges(community)
+    forbidden = _forbidden_rescue_exchanges(
+        model,
+        community,
+    )
+
+    candidate_exchanges = [
+        rid
+        for rid in global_exchanges
+        if rid not in current_medium
+        and rid not in forbidden
+    ]
+
+    for rid in global_exchanges:
+        if rid in current_medium:
+            community.solver.add_constraint(
+                f"c_rescue_medium_{len(community.solver.problem.getConstrs())}",
+                {rid: 1},
+                ">",
+                float(current_medium[rid]),
+            )
+        elif rid in forbidden:
+            community.solver.add_constraint(
+                f"c_rescue_forbid_{len(community.solver.problem.getConstrs())}",
+                {rid: 1},
+                ">",
+                0.0,
+            )
+
+    rescue_variables = {}
+
+    for index, rid in enumerate(candidate_exchanges):
+        z_name = f"z_rescue_{index}"
+        rescue_variables[rid] = z_name
+
+        community.solver.add_variable(
+            z_name,
+            0,
+            1,
+            vartype=VarType.BINARY,
+        )
+
+    community.solver.update()
+
+    for index, rid in enumerate(candidate_exchanges):
+        z_name = rescue_variables[rid]
+
+        community.solver.add_constraint(
+            f"c_rescue_candidate_{index}",
+            {
+                rid: 1,
+                z_name: -float(rich_uptake_bound),
+            },
+            ">",
+            0.0,
+        )
+
+    community.solver.add_constraint(
+        "c_rescue_growth",
+        {"community_growth": 1},
+        ">",
+        float(minimal_growth),
+    )
+
+    community.solver.update()
+
+    solution = community.solver.solve(
+        objective={
+            z_name: 1
+            for z_name in rescue_variables.values()
+        },
+        get_values=(
+            list(rescue_variables.values())
+            + ["community_growth"]
+        ),
+        minimize=True,
+    )
+
+    if solution.status != Status.OPTIMAL:
+        return {
+            "status": str(solution.status),
+            "minimum_supplement_count": None,
+            "supplements": [],
+            "candidate_exchange_count": len(
+                candidate_exchanges
+            ),
+            "forbidden_exchanges": sorted(forbidden),
+            "medium_tokens_matched": int(
+                medium_audit["number_matched_tokens"]
+            ),
+        }
+
+    selected = [
+        rid
+        for rid, z_name in rescue_variables.items()
+        if solution.values.get(z_name, 0.0) > 0.5
+    ]
+
+    validation_medium = dict(current_medium)
+
+    for rid in selected:
+        validation_medium[rid] = float(
+            rich_uptake_bound
+        )
+
+    validation = LayeredCommunity(
+        community_id + "_validation",
+        [model],
+        copy_models=False,
+        params=params,
+    )
+
+    validation.setup_medium(validation_medium)
+
+    validation_solution = validation.solver.solve(
+        objective={"community_growth": 1},
+        get_values=["community_growth"],
+        minimize=False,
+    )
+
+    validation_growth = None
+
+    if validation_solution.status == Status.OPTIMAL:
+        validation_growth = float(
+            validation_solution.values.get(
+                "community_growth",
+                0.0,
+            )
+        )
+
+    supplements = [
+        {
+            **_exchange_metadata(community, rid),
+            "uptake_bound": float(
+                rich_uptake_bound
+            ),
+        }
+        for rid in selected
+    ]
+
+    return {
+        "status": str(solution.status),
+        "minimum_supplement_count": len(selected),
+        "supplements": supplements,
+        "candidate_exchange_count": len(
+            candidate_exchanges
+        ),
+        "forbidden_exchanges": sorted(forbidden),
+        "medium_tokens_matched": int(
+            medium_audit["number_matched_tokens"]
+        ),
+        "validation_status": str(
+            validation_solution.status
+        ),
+        "validation_max_growth": validation_growth,
     }
 
 
@@ -272,6 +518,19 @@ def run_one(
             tolerance=tolerance,
         )
 
+        rescue = None
+
+        if diagnostic_class == "medium_limited":
+            rescue = solve_minimal_rescue(
+                model=model,
+                community_id=f"qc_rescue_{index:04d}",
+                medium_entries=medium_entries,
+                params=params,
+                fallback_uptake_bound=uptake_bound,
+                rich_uptake_bound=rich_uptake_bound,
+                minimal_growth=minimal_growth,
+            )
+
         result = {
             "status": "ok",
             "index": index,
@@ -292,6 +551,7 @@ def run_one(
                 rich_pass
             ),
             "diagnostic_class": diagnostic_class,
+            "rescue": rescue,
             "elapsed_seconds": perf_counter() - start,
         }
 
@@ -307,6 +567,11 @@ def run_one(
                 "diagnostic_class": diagnostic_class,
                 "selected_medium_max_growth": selected_growth,
                 "rich_medium_max_growth": rich_growth,
+                "rescue_size": (
+                    rescue.get("minimum_supplement_count")
+                    if rescue is not None
+                    else None
+                ),
             },
             model_dir / "status.json",
         )
@@ -315,7 +580,9 @@ def run_one(
             f"[{index}] {mag_id}: "
             f"selected={selected_growth} "
             f"rich={rich_growth} "
-            f"class={diagnostic_class}",
+            f"class={diagnostic_class} "
+            f"rescue_size="
+            f"{None if rescue is None else rescue.get('minimum_supplement_count')}",
             flush=True,
         )
 
