@@ -195,6 +195,31 @@ manifest, submits the 159-element array, limits it to two simultaneous Gurobi
 processes, and submits a collector with `afterany` dependency so aggregation
 runs even if individual samples fail.
 
+## Temporary four-model pilot mode
+
+While the full gapseq model collection is being updated, the manifest builder
+can restrict each sample to at most four currently available MAG models. MAGs
+are considered in descending abundance order, missing models may be skipped,
+and the scan stops as soon as four resolvable MAGs have been selected.
+
+Use:
+
+```bash
+export OCEAN_MAX_MAGS_PER_SAMPLE=4
+export OCEAN_ALLOW_MISSING_MODELS=1
+```
+
+This is intended only for pipeline validation. It changes the biological
+community being analyzed and therefore its product profile and minimum
+community are not the final 1375-MAG analysis.
+
+To return to the full analysis after the model repository is updated:
+
+```bash
+unset OCEAN_MAX_MAGS_PER_SAMPLE
+unset OCEAN_ALLOW_MISSING_MODELS
+```
+
 ## Recommended pilot before the 159-sample run
 
 Because the abundance matrix and `mathomics.txt` were not available while this
