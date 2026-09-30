@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import csv
 from collections import Counter
 from pathlib import Path
+
+OCEAN_DIR = Path(__file__).resolve().parent.parent
+if str(OCEAN_DIR) not in sys.path:
+    sys.path.insert(0, str(OCEAN_DIR))
 
 from common import yaml_dump_atomic, yaml_load
 
