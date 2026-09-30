@@ -32,7 +32,18 @@ minimum-cardinality subcommunities that preserve that phenotype.
    `v_r = v_r+ - v_r-`, minimizing `sum(v_r+ + v_r-)`.
 
    Diagnostic feasibility checks are performed before adding split variables
-   (C0) and after adding them but before the pFBA objective (C1).
+   (C0) and after adding them but before the pFBA objective (C1). The final
+   pFBA solve is C2.
+
+   The split variables use **finite, reaction-aware bounds** derived from the
+   original reaction bounds:
+
+   `0 <= v_r+ <= max(0, ub_r)`
+
+   `0 <= v_r- <= max(0, -lb_r)`
+
+   Infinite original bounds are replaced using MiSoSoup's practical
+   `BOUND_INF = 1000` convention.
 
 7. **Stage D** — build another fresh community, minimize `sum(y_j)`, and require
    every selected product to retain at least `beta` times its Stage-C reference
@@ -50,17 +61,131 @@ minimum-cardinality subcommunities that preserve that phenotype.
 
 ## Numerical status
 
-Earlier implementations reused the Stage-A/B MILP in Stage C and sometimes
-reported pFBA infeasibility even though the pre-pFBA problem was feasible.
-Because adding the exact split representation `v = v+ - v-` should not alter
-feasibility, this may be numerical. The current fresh-Stage-C implementation is
-a diagnostic refactor and **has not yet been validated on Leftraru** at this
-checkpoint.
+The fresh Stage-C implementation has now been validated on Leftraru.
 
-The last validated lexicographic formulation before the C/N/S/P filter solved
-successfully. After introducing the C/N/S/P filter, the inherited-solver Stage C
-again reported infeasibility. The fresh Stage-C C0/C1/C2 checks are intended to
-localize this behavior.
+Earlier versions used unbounded split variables,
+
+`0 <= v_r+ < infinity`
+
+`0 <= v_r- < infinity`,
+
+and showed a characteristic failure in which C0 and C1 were feasible, but C2
+was reported as infeasible after introducing the pFBA objective. Because C1 and
+C2 have the same feasible region and differ only in the objective, this behavior
+was inconsistent with exact mathematical feasibility and pointed to a numerical
+issue in the split-flux formulation.
+
+Replacing the infinite split-variable upper bounds with finite reaction-aware
+bounds resolved the C2 failure without changing Stage A, Stage B, the biological
+constraints, `alpha`, `epsilon`, or solver tolerances.
+
+The validated Leftraru run was job `13702509`.
+
+## Validated reference run
+
+Configuration:
+
+- organisms: `A1R12`, `I2R16`, `I3M07`
+- medium: `ac`
+- minimum growth: `0.01`
+- producible global exchanges before filtering: `79`
+- candidate products after the C/N/S/P filter: `73`
+- `alpha = 0.20`
+- `epsilon = 1e-5`
+- `beta = 0.90`
+
+Stage A:
+
+- `K* = 7`
+- selected products:
+  - `R_EX_5mtr_e`
+  - `R_EX_co2_e`
+  - `R_EX_gua_e`
+  - `R_EX_h2s_e`
+  - `R_EX_oxa_e`
+  - `R_EX_ptrc_e`
+  - `R_EX_s_e`
+
+Stage B:
+
+- `Q* = 1.8047669375271047`
+- reconstructed `sum(q_i) = 1.8047669375271045`
+- reconstruction difference: `2.22e-16`
+- selected products:
+  - `R_EX_5mtr_e`
+  - `R_EX_co2_e`
+  - `R_EX_gua_e`
+  - `R_EX_h2s_e`
+  - `R_EX_oxa_e`
+  - `R_EX_s_e`
+  - `R_EX_spmd_e`
+
+Thus Stage B preserves the Stage-A cardinality but replaces putrescine
+(`R_EX_ptrc_e`) with spermidine (`R_EX_spmd_e`) when maximizing normalized
+production.
+
+Stage C:
+
+- C0: feasible
+- C1: feasible
+- C2 pFBA: optimal
+- lexicographic floor: `1.8047569375271046`
+- achieved `sum(q_i) = 1.8047569375271049`
+- pFBA objective: `1451.2348882200026`
+
+Stage-C reference product fluxes:
+
+| Product | Reference flux |
+|---|---:|
+| `R_EX_5mtr_e` | 0.3884547604309968 |
+| `R_EX_co2_e` | 6.207117806575437 |
+| `R_EX_gua_e` | 0.750462422309124 |
+| `R_EX_h2s_e` | 2.7715519184719253 |
+| `R_EX_oxa_e` | 1.8761532124918106 |
+| `R_EX_s_e` | 2.4957626988478525 |
+| `R_EX_spmd_e` | 0.3884547604309968 |
+
+Stage D:
+
+- global minimum community size: `2`
+- product retention: `0.90`
+- number of minimum communities found: `1`
+- enumeration reported complete
+- minimum community: `I2R16 + I3M07`
+- growth:
+  - `I2R16 = 0.009999999999763531`
+  - `I3M07 = 0.009999999999763531`
+  - community growth = `0.019999999999527063`
+
+The minimum community satisfies all seven product-retention constraints.
+
+## Timing of validated run
+
+- individual product scan: `45.31 s`
+- Stage A: `0.37 s`
+- Stage B.1: `0.37 s`
+- Stage B.2: `<0.001 s`
+- Stage C: `0.77 s`
+- Stage D: `0.42 s`
+- total: `49.19 s`
+
+The individual-product scan dominates the runtime for this three-organism test
+case.
+
+## Next validation step
+
+The next planned experiment is a sensitivity analysis over:
+
+`alpha = 0.01, 0.025, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50`.
+
+For each `alpha`, record at least:
+
+- `K*(alpha)`
+- `Q*(alpha)`
+- Stage-B selected product set
+- Stage-C pFBA objective
+- minimum product-preserving community size
+- enumerated minimum communities
 
 ## Main files
 
