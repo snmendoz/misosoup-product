@@ -49,10 +49,17 @@ Models/gapseq/media/mathomics.txt
 each listed metabolite is opened for uptake with lower bound `-1000`. The bound
 can be changed with `OCEAN_UPTAKE_BOUND`.
 
-The abundance matrix must contain one header row with 1375 MAG identifiers and
-one leading column containing the 159 sample identifiers. CSV and TSV are
-supported. If the matrix is accidentally transposed, the preparatory step will
-detect a 1375 x 159 matrix and transpose it automatically.
+The abundance matrix is already available in the TARA Chile repository at:
+
+```text
+Data/CEODOS_MAG_TPMs_IDs_matrix.tsv
+```
+
+The launcher now uses that file by default. It must contain one header row with
+1375 MAG identifiers and one leading column containing the 159 sample
+identifiers. CSV and TSV are supported. If the matrix is accidentally
+transposed, the preparatory step will detect a 1375 x 159 matrix and transpose
+it automatically.
 
 ## MAG-to-model matching
 
@@ -147,13 +154,21 @@ cd ~/misosoup_product
 git pull origin main
 ```
 
-Once the abundance matrix and `mathomics.txt` are available:
+Once `mathomics.txt` is available, the repository defaults are sufficient:
 
 ```bash
-bash experiments/ocean_samples/submit_ocean_samples.sh \
-  /absolute/path/to/abundance_159x1375.tsv \
-  "$HOME/tara_chile_metabolic_models"
+bash experiments/ocean_samples/submit_ocean_samples.sh
 ```
+
+This uses:
+
+```text
+~/tara_chile_metabolic_models/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv
+~/tara_chile_metabolic_models/Models/gapseq/models/
+~/tara_chile_metabolic_models/Models/gapseq/media/mathomics.txt
+```
+
+You can still override the matrix or repository path explicitly if needed.
 
 If the data repository does not yet exist at that path, the launcher attempts a
 shallow clone from:
@@ -176,9 +191,7 @@ workflow was implemented, first run a small pilot after those files appear:
 
 ```bash
 export OCEAN_ARRAY_RANGE=0-3
-bash experiments/ocean_samples/submit_ocean_samples.sh \
-  /absolute/path/to/abundance_159x1375.tsv \
-  "$HOME/tara_chile_metabolic_models"
+bash experiments/ocean_samples/submit_ocean_samples.sh
 ```
 
 The concurrency cap is still applied, so this becomes `0-3%2`. The collector
