@@ -191,25 +191,202 @@ def resolve_mag_model(mag_id: str, exact_index: dict[str, set[Path]], normalized
     raise FileNotFoundError(f"No metabolic model could be matched to MAG {mag_id}")
 
 
-def read_medium_tokens(path: Path) -> list[str]:
+def read_medium_spec(
+    path: Path,
+    default_uptake_bound: float = -1000.0,
+) -> tuple[list[dict], dict]:
+    """Read either the temporary gapseq CSV medium or future mathomics.txt.
+
+    Supported formats:
+    1. CSV with columns compound, name, maxFlux. A positive maxFlux is
+       interpreted as uptake magnitude, so the lower bound is -abs(maxFlux).
+    2. Headerless text with one metabolite identifier per row. Those entries
+       use default_uptake_bound.
+    """
+
     path = Path(path).expanduser().resolve()
+
     if not path.exists():
         raise FileNotFoundError(f"Medium file not found: {path}")
-    tokens: list[str] = []
-    with path.open("r", encoding="utf-8-sig") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            if "\t" in stripped:
-                stripped = stripped.split("\t", 1)[0].strip()
-            elif "," in stripped:
-                stripped = stripped.split(",", 1)[0].strip()
-            if stripped:
-                tokens.append(stripped)
-    if not tokens:
-        raise ValueError(f"No metabolites found in medium file: {path}")
-    return tokens
+
+    if default_uptake_bound >= 0:
+        raise ValueError("default_uptake_bound must be negative.")
+
+    entries: list[dict] = []
+    source_format = "headerless_one_metabolite_per_row"
+
+    if path.suffix.lower() == ".csv":
+        with path.open(
+            "r",
+            encoding="utf-8-sig",
+            newline="",
+        ) as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = [
+                str(value).strip()
+                for value in (reader.fieldnames or [])
+            ]
+            normalized_fields = {
+                value.lower(): value
+                for value in fieldnames
+            }
+
+            if "compound" in normalized_fields:
+                source_format = "csv_compound_name_maxFlux"
+
+                compound_field = normalized_fields["compound"]
+                name_field = normalized_fields.get("name")
+                flux_field = (
+                    normalized_fields.get("maxflux")
+                    or normalized_fields.get("max_flux")
+                )
+
+                for line_number, row in enumerate(
+                    reader,
+                    start=2,
+                ):
+                    token = str(
+                        row.get(compound_field, "")
+                    ).strip()
+
+                    if not token:
+                        continue
+
+                    name = (
+                        str(row.get(name_field, "")).strip()
+                        if name_field is not None
+                        else ""
+                    )
+
+                    max_flux = None
+                    lower_bound = float(
+                        default_uptake_bound
+                    )
+
+                    if flux_field is not None:
+                        raw_flux = str(
+                            row.get(flux_field, "")
+                        ).strip()
+
+                        if raw_flux:
+                            try:
+                                max_flux = float(raw_flux)
+                            except ValueError as error:
+                                raise ValueError(
+                                    "Invalid maxFlux value "
+                                    f"{raw_flux!r} at line "
+                                    f"{line_number} in {path}."
+                                ) from error
+
+                            if (
+                                not math.isfinite(max_flux)
+                                or max_flux <= 0
+                            ):
+                                raise ValueError(
+                                    "maxFlux must be finite "
+                                    "and > 0 at line "
+                                    f"{line_number} in {path}; "
+                                    f"observed {max_flux}."
+                                )
+
+                            lower_bound = -abs(max_flux)
+
+                    entries.append(
+                        {
+                            "token": token,
+                            "name": name or None,
+                            "max_flux": max_flux,
+                            "lower_bound": float(
+                                lower_bound
+                            ),
+                        }
+                    )
+
+    if not entries:
+        source_format = "headerless_one_metabolite_per_row"
+
+        with path.open(
+            "r",
+            encoding="utf-8-sig",
+        ) as handle:
+            for line in handle:
+                stripped = line.strip()
+
+                if (
+                    not stripped
+                    or stripped.startswith("#")
+                ):
+                    continue
+
+                if "\t" in stripped:
+                    stripped = stripped.split(
+                        "\t",
+                        1,
+                    )[0].strip()
+                elif "," in stripped:
+                    stripped = stripped.split(
+                        ",",
+                        1,
+                    )[0].strip()
+
+                if stripped:
+                    entries.append(
+                        {
+                            "token": stripped,
+                            "name": None,
+                            "max_flux": None,
+                            "lower_bound": float(
+                                default_uptake_bound
+                            ),
+                        }
+                    )
+
+    if not entries:
+        raise ValueError(
+            f"No metabolites found in medium file: {path}"
+        )
+
+    tokens = [
+        entry["token"]
+        for entry in entries
+    ]
+
+    if len(tokens) != len(set(tokens)):
+        duplicates = sorted(
+            {
+                token
+                for token in tokens
+                if tokens.count(token) > 1
+            }
+        )
+        raise ValueError(
+            "Duplicate compounds in medium file: "
+            + ", ".join(duplicates[:20])
+        )
+
+    audit = {
+        "file": str(path),
+        "source_format": source_format,
+        "number_entries": len(entries),
+        "uses_per_compound_max_flux": any(
+            entry["max_flux"] is not None
+            for entry in entries
+        ),
+        "default_uptake_bound": float(
+            default_uptake_bound
+        ),
+    }
+
+    return entries, audit
+
+
+def read_medium_tokens(path: Path) -> list[str]:
+    """Backward-compatible token-only medium reader."""
+    entries, _ = read_medium_spec(path)
+    return [
+        entry["token"]
+        for entry in entries
+    ]
 
 
 def _medium_aliases_for_exchange(community, rid: str) -> set[str]:
@@ -230,57 +407,220 @@ def _medium_aliases_for_exchange(community, rid: str) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
-def resolve_medium_for_community(community, tokens: list[str], uptake_bound: float = -1000.0) -> tuple[dict[str, float], dict]:
+def resolve_medium_for_community(
+    community,
+    entries,
+    uptake_bound: float = -1000.0,
+) -> tuple[dict[str, float], dict]:
+    """Resolve medium entries against global community exchanges."""
+
     if uptake_bound >= 0:
-        raise ValueError("uptake_bound must be negative.")
-    global_exchanges = [rid for rid in community.merged_model.reactions if rid.startswith("R_EX_") and not rid.endswith("_i")]
+        raise ValueError(
+            "uptake_bound must be negative."
+        )
+
+    global_exchanges = [
+        rid
+        for rid in community.merged_model.reactions
+        if (
+            rid.startswith("R_EX_")
+            and not rid.endswith("_i")
+        )
+    ]
+
     exact_index: dict[str, set[str]] = {}
     normalized_index: dict[str, set[str]] = {}
+
     for rid in global_exchanges:
-        for alias in _medium_aliases_for_exchange(community, rid):
-            exact_index.setdefault(alias.lower(), set()).add(rid)
-            normalized_index.setdefault(normalized_id(alias), set()).add(rid)
+        for alias in _medium_aliases_for_exchange(
+            community,
+            rid,
+        ):
+            exact_index.setdefault(
+                alias.lower(),
+                set(),
+            ).add(rid)
+
+            normalized_index.setdefault(
+                normalized_id(alias),
+                set(),
+            ).add(rid)
 
     medium: dict[str, float] = {}
-    matched: dict[str, str] = {}
+    matched: dict[str, dict] = {}
     ambiguous: dict[str, list[str]] = {}
     unresolved: list[str] = []
-    for token in tokens:
+
+    normalized_entries = []
+
+    for entry in entries:
+        if isinstance(entry, str):
+            normalized_entries.append(
+                {
+                    "token": entry,
+                    "name": None,
+                    "max_flux": None,
+                    "lower_bound": float(
+                        uptake_bound
+                    ),
+                }
+            )
+        else:
+            normalized_entries.append(
+                {
+                    "token": str(
+                        entry["token"]
+                    ).strip(),
+                    "name": entry.get("name"),
+                    "max_flux": entry.get(
+                        "max_flux"
+                    ),
+                    "lower_bound": float(
+                        entry.get(
+                            "lower_bound",
+                            uptake_bound,
+                        )
+                    ),
+                }
+            )
+
+    for entry in normalized_entries:
+        token = entry["token"]
+
+        if not token:
+            continue
+
+        lower_bound = float(
+            entry["lower_bound"]
+        )
+
+        if lower_bound >= 0:
+            raise ValueError(
+                f"Medium entry {token} has "
+                "non-negative uptake lower bound "
+                f"{lower_bound}."
+            )
+
         candidates: set[str] = set()
-        direct_forms = {token, f"R_EX_{token}", f"R_EX_{token}_e", f"R_EX_{token}_e0"}
+
+        direct_forms = {
+            token,
+            f"R_EX_{token}",
+            f"R_EX_{token}_e",
+            f"R_EX_{token}_e0",
+        }
+
         if token.startswith("EX_"):
-            direct_forms.add(f"R_{token}")
+            direct_forms.add(
+                f"R_{token}"
+            )
+
         if token.startswith("M_"):
-            direct_forms.add(f"R_EX_{token[2:]}")
+            direct_forms.add(
+                f"R_EX_{token[2:]}"
+            )
+
         for form in direct_forms:
-            if form in community.merged_model.reactions and form.startswith("R_EX_") and not form.endswith("_i"):
+            if (
+                form
+                in community.merged_model.reactions
+                and form.startswith("R_EX_")
+                and not form.endswith("_i")
+            ):
                 candidates.add(form)
-            candidates.update(exact_index.get(form.lower(), set()))
+
+            candidates.update(
+                exact_index.get(
+                    form.lower(),
+                    set(),
+                )
+            )
+
         if not candidates:
-            candidates.update(normalized_index.get(normalized_id(token), set()))
+            candidates.update(
+                normalized_index.get(
+                    normalized_id(token),
+                    set(),
+                )
+            )
+
         if len(candidates) == 1:
             rid = next(iter(candidates))
-            medium[rid] = float(uptake_bound)
-            matched[token] = rid
+
+            previous_bound = medium.get(rid)
+            if (
+                previous_bound is not None
+                and abs(
+                    previous_bound
+                    - lower_bound
+                ) > 1e-12
+            ):
+                raise ValueError(
+                    "Two medium entries resolve "
+                    f"to {rid} with different "
+                    "bounds: "
+                    f"{previous_bound} and "
+                    f"{lower_bound}."
+                )
+
+            medium[rid] = lower_bound
+
+            matched[token] = {
+                "exchange_reaction": rid,
+                "lower_bound": lower_bound,
+                "name": entry.get("name"),
+                "max_flux": entry.get(
+                    "max_flux"
+                ),
+            }
+
         elif len(candidates) > 1:
-            ambiguous[token] = sorted(candidates)
+            ambiguous[token] = sorted(
+                candidates
+            )
+
         else:
             unresolved.append(token)
 
     if ambiguous:
-        formatted = "; ".join(f"{token} -> {values}" for token, values in list(ambiguous.items())[:20])
-        raise ValueError("Ambiguous medium-metabolite mappings detected: " + formatted)
+        formatted = "; ".join(
+            f"{token} -> {values}"
+            for token, values
+            in list(
+                ambiguous.items()
+            )[:20]
+        )
+
+        raise ValueError(
+            "Ambiguous medium-metabolite "
+            "mappings detected: "
+            + formatted
+        )
+
     if not medium:
-        raise ValueError("None of the medium metabolites matched a global exchange reaction in this sample community.")
+        raise ValueError(
+            "None of the medium metabolites "
+            "matched a global exchange reaction "
+            "in this sample community."
+        )
 
     audit = {
-        "number_tokens": len(tokens),
-        "number_matched_tokens": len(matched),
-        "number_unresolved_tokens": len(unresolved),
+        "number_tokens": len(
+            normalized_entries
+        ),
+        "number_matched_tokens": len(
+            matched
+        ),
+        "number_unresolved_tokens": len(
+            unresolved
+        ),
         "matched": matched,
         "unresolved": unresolved,
-        "uptake_bound": float(uptake_bound),
+        "fallback_uptake_bound": float(
+            uptake_bound
+        ),
     }
+
     return medium, audit
 
 
