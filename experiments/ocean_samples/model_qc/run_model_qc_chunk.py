@@ -489,15 +489,7 @@ def run_one(
             fallback_uptake_bound=uptake_bound,
         )
 
-        rich = solve_rich_growth(
-            model=model,
-            community_id=f"qc_rich_{index:04d}",
-            params=params,
-            rich_uptake_bound=rich_uptake_bound,
-        )
-
         selected_growth = selected["max_growth"]
-        rich_growth = rich["max_growth"]
 
         selected_pass = (
             selected["status"] == str(Status.OPTIMAL)
@@ -505,31 +497,56 @@ def run_one(
             and selected_growth + tolerance >= minimal_growth
         )
 
-        rich_pass = (
-            rich["status"] == str(Status.OPTIMAL)
-            and rich_growth is not None
-            and rich_growth + tolerance >= minimal_growth
-        )
-
-        diagnostic_class = classify(
-            selected=selected,
-            rich=rich,
-            minimal_growth=minimal_growth,
-            tolerance=tolerance,
-        )
-
+        # The 1375 updated models were gap-filled using this same medium.
+        # Therefore the intended-medium growth test is the primary QC.
+        # Rich-medium and rescue analyses are diagnostic fallbacks only
+        # for models that unexpectedly fail the intended-medium test.
+        rich = {
+            "status": "not_run",
+            "max_growth": None,
+            "number_global_exchanges_opened": None,
+            "uptake_bound": float(rich_uptake_bound),
+            "forbidden_exchanges": [],
+            "biomass_exchange_excluded": None,
+        }
+        rich_growth = None
+        rich_pass = False
         rescue = None
 
-        if diagnostic_class == "medium_limited":
-            rescue = solve_minimal_rescue(
+        if selected_pass:
+            diagnostic_class = "grows_in_medium"
+        else:
+            rich = solve_rich_growth(
                 model=model,
-                community_id=f"qc_rescue_{index:04d}",
-                medium_entries=medium_entries,
+                community_id=f"qc_rich_{index:04d}",
                 params=params,
-                fallback_uptake_bound=uptake_bound,
                 rich_uptake_bound=rich_uptake_bound,
-                minimal_growth=minimal_growth,
             )
+            rich_growth = rich["max_growth"]
+
+            rich_pass = (
+                rich["status"] == str(Status.OPTIMAL)
+                and rich_growth is not None
+                and rich_growth + tolerance >= minimal_growth
+            )
+
+            diagnostic_class = classify(
+                selected=selected,
+                rich=rich,
+                minimal_growth=minimal_growth,
+                tolerance=tolerance,
+            )
+
+            if diagnostic_class == "medium_limited":
+                rescue = solve_minimal_rescue(
+                    model=model,
+                    community_id=f"qc_rescue_{index:04d}",
+                    medium_entries=medium_entries,
+                    params=params,
+                    fallback_uptake_bound=uptake_bound,
+                    rich_uptake_bound=rich_uptake_bound,
+                    minimal_growth=minimal_growth,
+                )
 
         result = {
             "status": "ok",
