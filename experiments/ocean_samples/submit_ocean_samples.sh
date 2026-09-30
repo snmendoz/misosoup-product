@@ -58,7 +58,8 @@ DATA_REPO="${2:-${OCEAN_DATA_REPO:-$HOME/tara_chile_metabolic_models}}"
 DATA_REPO="${DATA_REPO/#\~/$HOME}"
 
 MODELS_DIR="${OCEAN_MODELS_DIR:-$DATA_REPO/Models/gapseq/models}"
-MEDIUM_FILE="${OCEAN_MEDIUM_FILE:-$DATA_REPO/Models/gapseq/media/mathomics.txt}"
+TARA_MEDIUM="$DATA_REPO/Models/gapseq/media/mathomics.txt"
+BUNDLED_MEDIUM="$REPO_ROOT/experiments/ocean_samples/media/complex_media_gapseq2.csv"
 DEFAULT_MATRIX="$DATA_REPO/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv"
 MATRIX_INPUT="${1:-${OCEAN_ABUNDANCE_MATRIX:-$DEFAULT_MATRIX}}"
 
@@ -95,6 +96,16 @@ if [[ ! -d "$DATA_REPO" ]]; then
         "$DATA_REPO"
 fi
 
+if [[ -n "${OCEAN_MEDIUM_FILE:-}" ]]; then
+    MEDIUM_FILE="$OCEAN_MEDIUM_FILE"
+elif [[ -f "$TARA_MEDIUM" ]]; then
+    MEDIUM_FILE="$TARA_MEDIUM"
+else
+    MEDIUM_FILE="$BUNDLED_MEDIUM"
+    echo "mathomics.txt not found; using bundled temporary medium:"
+    echo "  $MEDIUM_FILE"
+fi
+
 MATRIX_PATH="$(readlink -f "$MATRIX_INPUT")"
 
 if [[ ! -f "$MATRIX_PATH" ]]; then
@@ -111,8 +122,7 @@ fi
 
 if [[ ! -f "$MEDIUM_FILE" ]]; then
     echo "ERROR: medium file not found: $MEDIUM_FILE" >&2
-    echo "Expected the headerless one-metabolite-per-row file mathomics.txt." >&2
-    echo "Upload it first, or set OCEAN_MEDIUM_FILE to its actual location." >&2
+    echo "Set OCEAN_MEDIUM_FILE explicitly or restore the bundled medium." >&2
     exit 1
 fi
 
