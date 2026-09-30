@@ -42,11 +42,116 @@ def normalized_id(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
-def read_abundance_matrix(path: Path, expected_samples: int = 159, expected_mags: int = 1375) -> pd.DataFrame:
-    """Read and validate a sample x MAG abundance matrix."""
+def _choose_unique_id_column(
+    raw: pd.DataFrame,
+    candidate_columns: list[str],
+    expected_count: int,
+    entity_label: str,
+) -> str:
+    """Choose a unique identifier column from non-abundance metadata."""
+
+    unique_candidates = []
+
+    for column in candidate_columns:
+        values = raw[column].map(
+            lambda value: str(value).strip()
+        )
+
+        if (
+            len(values) == expected_count
+            and not values.eq("").any()
+            and values.nunique(dropna=False) == expected_count
+        ):
+            lower = column.lower()
+
+            score = 0
+
+            if lower in {
+                "mag_id",
+                "magid",
+                "genome_id",
+                "genomeid",
+                "bin_id",
+                "binid",
+                "sample_id",
+                "sampleid",
+            }:
+                score += 100
+
+            if "mag" in lower:
+                score += 30
+
+            if "genome" in lower:
+                score += 25
+
+            if "bin" in lower:
+                score += 20
+
+            if "sample" in lower:
+                score += 20
+
+            if lower == "id" or lower.endswith("_id"):
+                score += 15
+
+            if "tax" in lower:
+                score -= 50
+
+            unique_candidates.append(
+                (score, column)
+            )
+
+    if not unique_candidates:
+        raise ValueError(
+            f"Could not identify a unique {entity_label} ID column. "
+            "Candidate metadata columns were: "
+            + ", ".join(candidate_columns)
+        )
+
+    unique_candidates.sort(
+        key=lambda item: (
+            -item[0],
+            candidate_columns.index(item[1]),
+        )
+    )
+
+    best_score = unique_candidates[0][0]
+    best = [
+        column
+        for score, column in unique_candidates
+        if score == best_score
+    ]
+
+    if len(best) > 1 and best_score <= 0:
+        raise ValueError(
+            f"Multiple possible unique {entity_label} ID columns "
+            f"were found: {best}. Rename the intended column to "
+            f"'{entity_label}_id' or provide a simplified matrix."
+        )
+
+    return best[0]
+
+
+def read_abundance_matrix(
+    path: Path,
+    expected_samples: int = 159,
+    expected_mags: int = 1375,
+) -> pd.DataFrame:
+    """Read and validate a sample x MAG abundance matrix.
+
+    The CEODOS table is allowed to contain metadata columns in addition to
+    abundances. In particular, a MAG x sample table may contain a repeated
+    taxonomy column plus a separate unique MAG identifier column.
+
+    The function detects numeric abundance columns first, finds a unique ID
+    column among the remaining metadata, and always returns samples x MAGs.
+    """
+
     path = Path(path).expanduser().resolve()
+
     if not path.exists():
-        raise FileNotFoundError(f"Abundance matrix not found: {path}")
+        raise FileNotFoundError(
+            f"Abundance matrix not found: {path}"
+        )
 
     if path.suffix.lower() in {".tsv", ".tab"}:
         sep, engine = "\t", "c"
@@ -55,39 +160,261 @@ def read_abundance_matrix(path: Path, expected_samples: int = 159, expected_mags
     else:
         sep, engine = None, "python"
 
-    frame = pd.read_csv(path, sep=sep, engine=engine, header=0, index_col=0)
-    if frame.empty:
-        raise ValueError(f"Abundance matrix is empty: {path}")
+    raw = pd.read_csv(
+        path,
+        sep=sep,
+        engine=engine,
+        header=0,
+    )
 
-    frame.index = frame.index.map(lambda value: str(value).strip())
-    frame.columns = [str(value).strip() for value in frame.columns]
+    if raw.empty:
+        raise ValueError(
+            f"Abundance matrix is empty: {path}"
+        )
 
-    if frame.index.has_duplicates:
-        duplicates = frame.index[frame.index.duplicated()].unique().tolist()
-        raise ValueError("Duplicate sample IDs in abundance matrix: " + ", ".join(map(str, duplicates[:20])))
+    raw.columns = [
+        str(value).strip()
+        for value in raw.columns
+    ]
 
-    if pd.Index(frame.columns).has_duplicates:
-        duplicates = pd.Index(frame.columns)[pd.Index(frame.columns).duplicated()].unique().tolist()
-        raise ValueError("Duplicate MAG IDs in abundance matrix: " + ", ".join(map(str, duplicates[:20])))
+    if pd.Index(raw.columns).has_duplicates:
+        duplicates = (
+            pd.Index(raw.columns)[
+                pd.Index(raw.columns).duplicated()
+            ]
+            .unique()
+            .tolist()
+        )
 
-    converted = frame.apply(pd.to_numeric, errors="raise").fillna(0.0)
-    expected_shape = (expected_samples, expected_mags)
-    transposed_shape = (expected_mags, expected_samples)
-
-    if expected_samples > 0 and expected_mags > 0:
-        if converted.shape == transposed_shape:
-            converted = converted.T
-        elif converted.shape != expected_shape:
-            raise ValueError(
-                "Unexpected abundance matrix shape. "
-                f"Observed {converted.shape}; expected {expected_shape} "
-                f"(samples x MAGs), or {transposed_shape} if transposed."
+        raise ValueError(
+            "Duplicate column names in abundance matrix: "
+            + ", ".join(
+                map(
+                    str,
+                    duplicates[:20],
+                )
             )
+        )
 
-    if not all(math.isfinite(float(value)) for value in converted.to_numpy().ravel()):
-        raise ValueError("Abundance matrix contains non-finite values.")
-    if (converted < 0).any().any():
-        raise ValueError("Abundance matrix contains negative values.")
+    numeric_columns = []
+    converted_columns = {}
+
+    for column in raw.columns:
+        converted = pd.to_numeric(
+            raw[column],
+            errors="coerce",
+        )
+
+        original_nonempty = (
+            raw[column]
+            .map(
+                lambda value: (
+                    ""
+                    if pd.isna(value)
+                    else str(value).strip()
+                )
+            )
+            .ne("")
+        )
+
+        invalid = (
+            original_nonempty
+            & converted.isna()
+        )
+
+        if not invalid.any():
+            numeric_columns.append(
+                column
+            )
+            converted_columns[
+                column
+            ] = converted.fillna(0.0)
+
+    metadata_columns = [
+        column
+        for column in raw.columns
+        if column not in numeric_columns
+    ]
+
+    # --------------------------------------------------------------
+    # CEODOS/native MAG x sample orientation.
+    #
+    # Expected structure:
+    #
+    #     1375 MAG rows
+    #     159 numeric sample columns
+    #     one or more metadata columns (e.g. taxonomy + MAG ID)
+    #
+    # Taxonomy is not required to be unique; the MAG ID column is.
+    # --------------------------------------------------------------
+    if (
+        len(raw) == expected_mags
+        and len(numeric_columns) == expected_samples
+    ):
+        mag_id_column = _choose_unique_id_column(
+            raw=raw,
+            candidate_columns=metadata_columns,
+            expected_count=expected_mags,
+            entity_label="mag",
+        )
+
+        mag_ids = (
+            raw[mag_id_column]
+            .map(
+                lambda value: str(value).strip()
+            )
+            .tolist()
+        )
+
+        abundance = pd.DataFrame(
+            {
+                column: converted_columns[column]
+                for column in numeric_columns
+            }
+        )
+
+        abundance.index = mag_ids
+        converted = abundance.T
+
+        converted.index = [
+            str(value).strip()
+            for value in converted.index
+        ]
+
+        converted.columns = mag_ids
+
+        converted.attrs[
+            "detected_orientation"
+        ] = "MAGs_x_samples_transposed_to_samples_x_MAGs"
+
+        converted.attrs[
+            "mag_id_column"
+        ] = mag_id_column
+
+    # --------------------------------------------------------------
+    # Conventional sample x MAG orientation.
+    #
+    # Expected structure:
+    #
+    #     159 sample rows
+    #     1375 numeric MAG columns
+    #     one metadata column holding unique sample IDs
+    # --------------------------------------------------------------
+    elif (
+        len(raw) == expected_samples
+        and len(numeric_columns) == expected_mags
+    ):
+        sample_id_column = _choose_unique_id_column(
+            raw=raw,
+            candidate_columns=metadata_columns,
+            expected_count=expected_samples,
+            entity_label="sample",
+        )
+
+        sample_ids = (
+            raw[sample_id_column]
+            .map(
+                lambda value: str(value).strip()
+            )
+            .tolist()
+        )
+
+        converted = pd.DataFrame(
+            {
+                column: converted_columns[column]
+                for column in numeric_columns
+            }
+        )
+
+        converted.index = sample_ids
+        converted.columns = [
+            str(value).strip()
+            for value in numeric_columns
+        ]
+
+        converted.attrs[
+            "detected_orientation"
+        ] = "samples_x_MAGs"
+
+        converted.attrs[
+            "sample_id_column"
+        ] = sample_id_column
+
+    else:
+        raise ValueError(
+            "Unable to identify the abundance block automatically. "
+            f"Observed {len(raw)} data rows, "
+            f"{len(raw.columns)} total columns, "
+            f"{len(numeric_columns)} fully numeric columns, and "
+            f"{len(metadata_columns)} metadata columns. "
+            f"Expected either {expected_mags} MAG rows with "
+            f"{expected_samples} numeric sample columns, or "
+            f"{expected_samples} sample rows with "
+            f"{expected_mags} numeric MAG columns. "
+            "Metadata columns such as taxonomy are allowed."
+        )
+
+    if converted.index.has_duplicates:
+        duplicates = (
+            converted.index[
+                converted.index.duplicated()
+            ]
+            .unique()
+            .tolist()
+        )
+
+        raise ValueError(
+            "Duplicate sample IDs after matrix parsing: "
+            + ", ".join(
+                map(
+                    str,
+                    duplicates[:20],
+                )
+            )
+        )
+
+    if pd.Index(
+        converted.columns
+    ).has_duplicates:
+        duplicates = (
+            pd.Index(converted.columns)[
+                pd.Index(
+                    converted.columns
+                ).duplicated()
+            ]
+            .unique()
+            .tolist()
+        )
+
+        raise ValueError(
+            "Duplicate MAG IDs after matrix parsing: "
+            + ", ".join(
+                map(
+                    str,
+                    duplicates[:20],
+                )
+            )
+        )
+
+    values = converted.to_numpy()
+
+    if not all(
+        math.isfinite(
+            float(value)
+        )
+        for value in values.ravel()
+    ):
+        raise ValueError(
+            "Abundance matrix contains non-finite values."
+        )
+
+    if (
+        converted < 0
+    ).any().any():
+        raise ValueError(
+            "Abundance matrix contains negative values."
+        )
+
     return converted
 
 
