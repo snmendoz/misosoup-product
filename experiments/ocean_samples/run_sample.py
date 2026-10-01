@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 import json
 import os
 import traceback
@@ -55,6 +56,360 @@ def write_json_atomic(data: dict, path: Path) -> None:
     with tmp.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
     tmp.replace(path)
+
+
+def write_csv_atomic(
+    rows: list[dict],
+    fieldnames: list[str],
+    path: Path,
+) -> None:
+    """Write a CSV atomically so partial audit files are never exposed."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+
+    with tmp.open(
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    tmp.replace(path)
+
+
+def reaction_metadata(
+    community: LayeredCommunity,
+    reaction_id: str,
+) -> dict:
+    """Return metabolite metadata for a single-metabolite exchange."""
+
+    reaction = community.merged_model.reactions.get(
+        reaction_id
+    )
+
+    metadata = {
+        "metabolite_id": None,
+        "metabolite_name": None,
+        "metabolite_formula": None,
+    }
+
+    if reaction is None or len(reaction.stoichiometry) != 1:
+        return metadata
+
+    metabolite_id = next(
+        iter(reaction.stoichiometry)
+    )
+    metabolite = community.merged_model.metabolites.get(
+        metabolite_id
+    )
+
+    metadata["metabolite_id"] = metabolite_id
+
+    if metabolite is not None:
+        metadata["metabolite_name"] = getattr(
+            metabolite,
+            "name",
+            None,
+        )
+        metadata["metabolite_formula"] = getattr(
+            metabolite,
+            "formula",
+            None,
+        )
+
+    return metadata
+
+
+def build_product_preservation_audit(
+    stage_d: dict,
+    stage_c: dict,
+    full_product_maxima: dict,
+    community: LayeredCommunity,
+    tolerance: float,
+) -> list[dict]:
+    """Build one audit row per minimum-community/product pair."""
+
+    rows = []
+
+    for community_index, minimum_community in enumerate(
+        stage_d["communities"],
+        start=1,
+    ):
+        members = minimum_community.get(
+            "mags",
+            minimum_community.get(
+                "organisms",
+                [],
+            ),
+        )
+        member_text = ";".join(
+            str(member)
+            for member in members
+        )
+
+        for rid, reference_info in stage_c[
+            "reference_products"
+        ].items():
+            reference_flux = float(
+                reference_info[
+                    "reference_flux"
+                ]
+            )
+            required_flux = float(
+                stage_d[
+                    "product_requirements"
+                ][rid]
+            )
+            observed_flux = float(
+                minimum_community[
+                    "product_fluxes"
+                ].get(
+                    rid,
+                    0.0,
+                )
+            )
+            margin = (
+                observed_flux
+                - required_flux
+            )
+            passes = (
+                observed_flux
+                + tolerance
+                >= required_flux
+            )
+
+            if reference_flux > 0:
+                observed_retention = (
+                    observed_flux
+                    / reference_flux
+                )
+            else:
+                observed_retention = None
+
+            metadata = reaction_metadata(
+                community,
+                rid,
+            )
+
+            rows.append(
+                {
+                    "community_index": community_index,
+                    "community_size": int(
+                        minimum_community[
+                            "size"
+                        ]
+                    ),
+                    "members": member_text,
+                    "product_reaction": rid,
+                    **metadata,
+                    "max_flux_full_community": float(
+                        full_product_maxima[
+                            rid
+                        ]
+                    ),
+                    "stage_c_reference_flux": reference_flux,
+                    "required_retention_fraction": float(
+                        stage_d[
+                            "product_retention"
+                        ]
+                    ),
+                    "stage_d_required_flux": required_flux,
+                    "stage_d_observed_flux": observed_flux,
+                    "observed_retention_fraction": observed_retention,
+                    "margin_to_requirement": margin,
+                    "passes_requirement": bool(
+                        passes
+                    ),
+                }
+            )
+
+    failing = [
+        row
+        for row in rows
+        if not row[
+            "passes_requirement"
+        ]
+    ]
+
+    if failing:
+        first = failing[0]
+        raise RuntimeError(
+            "Product-preservation audit failed despite "
+            "Stage-D validation: "
+            f"community={first['community_index']} "
+            f"product={first['product_reaction']} "
+            f"observed={first['stage_d_observed_flux']} "
+            f"required={first['stage_d_required_flux']}."
+        )
+
+    return rows
+
+
+def build_medium_uptake_audit(
+    stage_d: dict,
+    medium: dict,
+    medium_audit: dict,
+    community: LayeredCommunity,
+    tolerance: float,
+) -> list[dict]:
+    """Build one audit row per minimum-community/medium exchange pair."""
+
+    exchange_to_tokens: dict[str, list[str]] = {}
+    exchange_to_names: dict[str, list[str]] = {}
+
+    for token, info in medium_audit.get(
+        "matched",
+        {},
+    ).items():
+        rid = info[
+            "exchange_reaction"
+        ]
+        exchange_to_tokens.setdefault(
+            rid,
+            [],
+        ).append(
+            str(token)
+        )
+
+        name = info.get(
+            "name"
+        )
+        if name:
+            exchange_to_names.setdefault(
+                rid,
+                [],
+            ).append(
+                str(name)
+            )
+
+    rows = []
+
+    for community_index, minimum_community in enumerate(
+        stage_d["communities"],
+        start=1,
+    ):
+        members = minimum_community.get(
+            "mags",
+            minimum_community.get(
+                "organisms",
+                [],
+            ),
+        )
+        member_text = ";".join(
+            str(member)
+            for member in members
+        )
+
+        observed_exchanges = minimum_community.get(
+            "medium_exchange_fluxes",
+            {},
+        )
+
+        for rid, lower_bound in medium.items():
+            lower_bound = float(
+                lower_bound
+            )
+            exchange_flux = float(
+                observed_exchanges.get(
+                    rid,
+                    0.0,
+                )
+            )
+
+            allowed_uptake = abs(
+                lower_bound
+            )
+            actual_uptake = max(
+                0.0,
+                -exchange_flux,
+            )
+            actual_secretion = max(
+                0.0,
+                exchange_flux,
+            )
+
+            if allowed_uptake > 0:
+                fraction_used = (
+                    actual_uptake
+                    / allowed_uptake
+                )
+            else:
+                fraction_used = None
+
+            margin_from_lb = (
+                exchange_flux
+                - lower_bound
+            )
+
+            near_limit_tolerance = max(
+                tolerance,
+                1e-9
+                * max(
+                    1.0,
+                    allowed_uptake,
+                ),
+            )
+            at_uptake_limit = (
+                actual_uptake > 0
+                and abs(
+                    exchange_flux
+                    - lower_bound
+                )
+                <= near_limit_tolerance
+            )
+
+            metadata = reaction_metadata(
+                community,
+                rid,
+            )
+
+            rows.append(
+                {
+                    "community_index": community_index,
+                    "community_size": int(
+                        minimum_community[
+                            "size"
+                        ]
+                    ),
+                    "members": member_text,
+                    "medium_tokens": ";".join(
+                        sorted(
+                            exchange_to_tokens.get(
+                                rid,
+                                [],
+                            )
+                        )
+                    ),
+                    "medium_names": ";".join(
+                        sorted(
+                            exchange_to_names.get(
+                                rid,
+                                [],
+                            )
+                        )
+                    ),
+                    "exchange_reaction": rid,
+                    **metadata,
+                    "allowed_lower_bound": lower_bound,
+                    "allowed_uptake_magnitude": allowed_uptake,
+                    "exchange_flux": exchange_flux,
+                    "actual_uptake_magnitude": actual_uptake,
+                    "actual_secretion_flux": actual_secretion,
+                    "fraction_of_allowed_uptake": fraction_used,
+                    "margin_from_lower_bound": margin_from_lb,
+                    "at_uptake_limit": bool(
+                        at_uptake_limit
+                    ),
+                }
+            )
+
+    return rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -512,6 +867,102 @@ def main() -> None:
         stage_d_time = elapsed(t)
         stage_d = map_stage_d(stage_d_raw, solver_to_mag)
 
+        product_audit_rows = build_product_preservation_audit(
+            stage_d=stage_d,
+            stage_c=stage_c,
+            full_product_maxima=filtered,
+            community=stage_d_community,
+            tolerance=args.production_tolerance,
+        )
+        medium_audit_rows = build_medium_uptake_audit(
+            stage_d=stage_d,
+            medium=medium,
+            medium_audit=medium_audit,
+            community=stage_d_community,
+            tolerance=args.production_tolerance,
+        )
+
+        product_audit_path = (
+            sample_dir
+            / "product_preservation_audit.csv"
+        )
+        medium_audit_path = (
+            sample_dir
+            / "medium_uptake_audit.csv"
+        )
+
+        write_csv_atomic(
+            product_audit_rows,
+            [
+                "community_index",
+                "community_size",
+                "members",
+                "product_reaction",
+                "metabolite_id",
+                "metabolite_name",
+                "metabolite_formula",
+                "max_flux_full_community",
+                "stage_c_reference_flux",
+                "required_retention_fraction",
+                "stage_d_required_flux",
+                "stage_d_observed_flux",
+                "observed_retention_fraction",
+                "margin_to_requirement",
+                "passes_requirement",
+            ],
+            product_audit_path,
+        )
+
+        write_csv_atomic(
+            medium_audit_rows,
+            [
+                "community_index",
+                "community_size",
+                "members",
+                "medium_tokens",
+                "medium_names",
+                "exchange_reaction",
+                "metabolite_id",
+                "metabolite_name",
+                "metabolite_formula",
+                "allowed_lower_bound",
+                "allowed_uptake_magnitude",
+                "exchange_flux",
+                "actual_uptake_magnitude",
+                "actual_secretion_flux",
+                "fraction_of_allowed_uptake",
+                "margin_from_lower_bound",
+                "at_uptake_limit",
+            ],
+            medium_audit_path,
+        )
+
+        products_passed = sum(
+            bool(
+                row[
+                    "passes_requirement"
+                ]
+            )
+            for row in product_audit_rows
+        )
+        medium_at_limit = sum(
+            bool(
+                row[
+                    "at_uptake_limit"
+                ]
+            )
+            for row in medium_audit_rows
+        )
+
+        print(
+            "Audit outputs: "
+            f"{products_passed}/{len(product_audit_rows)} "
+            "product constraints PASS; "
+            f"{medium_at_limit}/{len(medium_audit_rows)} "
+            "medium-exchange rows at uptake limit.",
+            flush=True,
+        )
+
         total_time = elapsed(total_start)
 
         selected_info = {
@@ -616,6 +1067,33 @@ def main() -> None:
                 "reference_products": reference_products,
             },
             "stage_d": stage_d,
+            "audits": {
+                "product_preservation": {
+                    "file": str(
+                        product_audit_path
+                    ),
+                    "number_rows": len(
+                        product_audit_rows
+                    ),
+                    "all_requirements_pass": bool(
+                        products_passed
+                        == len(
+                            product_audit_rows
+                        )
+                    ),
+                },
+                "medium_uptake": {
+                    "file": str(
+                        medium_audit_path
+                    ),
+                    "number_rows": len(
+                        medium_audit_rows
+                    ),
+                    "number_at_uptake_limit": int(
+                        medium_at_limit
+                    ),
+                },
+            },
             "timing_seconds": {
                 "model_loading": model_loading,
                 "community_build": community_build,
@@ -652,6 +1130,19 @@ def main() -> None:
                 ),
                 "enumeration_complete": bool(
                     stage_d["enumeration_complete"]
+                ),
+                "product_audit_rows": int(
+                    len(
+                        product_audit_rows
+                    )
+                ),
+                "medium_audit_rows": int(
+                    len(
+                        medium_audit_rows
+                    )
+                ),
+                "medium_rows_at_uptake_limit": int(
+                    medium_at_limit
                 ),
                 "total_seconds": float(total_time),
             },
