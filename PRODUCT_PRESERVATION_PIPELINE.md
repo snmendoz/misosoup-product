@@ -50,6 +50,32 @@ minimum-cardinality subcommunities that preserve that phenotype.
    flux. Alternative globally minimum communities are enumerated with no-good
    cuts.
 
+## Stage-D audit outputs
+
+The ocean-sample workflow writes two explicit audit tables for every successful
+Stage-D run.
+
+1. `product_preservation_audit.csv` contains one row for every
+   minimum-community/product pair. It records the full-community product
+   maximum, the Stage-C reference flux, the Stage-D required lower bound
+   (`beta * v_i^ref`), the observed Stage-D flux, the retention fraction,
+   the numerical margin to the requirement, and a PASS/FAIL flag. The workflow
+   raises an error if any returned minimum community violates a product
+   requirement beyond the configured production tolerance.
+
+2. `medium_uptake_audit.csv` contains one row for every
+   minimum-community/medium-exchange pair. It records the configured uptake
+   lower bound, the raw Stage-D exchange flux, the actual uptake magnitude
+   (negative exchange flux converted to a positive magnitude), secretion when
+   present, the fraction of the allowed uptake that is used, the distance from
+   the lower bound, and whether the returned Stage-D solution is at the uptake
+   limit.
+
+The medium audit reports the fluxes of the particular optimal Stage-D solution
+returned by the solver. Because Stage D minimizes community cardinality rather
+than nutrient uptake, these fluxes should be interpreted as an audit of the
+returned solution, not as proof that a nutrient uptake is uniquely required.
+
 ## Default experimental parameters
 
 - minimum growth: `0.01`
