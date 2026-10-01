@@ -142,6 +142,7 @@ def _extract_community_solution(
     organism_variables: dict,
     selected_products: list,
     product_requirements: dict,
+    medium: dict,
     tolerance: float,
 ) -> dict:
     """Convert one minimum-community solution into a serializable dictionary."""
@@ -202,12 +203,27 @@ def _extract_community_solution(
         )
     )
 
+    # Preserve the raw global-exchange fluxes for every compound in the
+    # configured medium.  Negative exchange flux is uptake, while positive
+    # exchange flux is secretion.  These values are used by the experiment
+    # layer to audit whether a minimum community is relying on uptake bounds.
+    medium_exchange_fluxes = {
+        rid: float(
+            solution.values.get(
+                rid,
+                0.0,
+            )
+        )
+        for rid in medium
+    }
+
     return {
         "organisms": organisms,
         "size": len(organisms),
         "organism_growth": organism_growth,
         "community_growth": community_growth,
         "product_fluxes": product_fluxes,
+        "medium_exchange_fluxes": medium_exchange_fluxes,
     }
 
 
@@ -419,6 +435,7 @@ def findMinimalProductCommunities(
     values_to_get = (
         list(organism_variables.values())
         + selected_products
+        + list(medium.keys())
         + biomass_reactions
         + [community.merged_model.biomass_reaction]
     )
@@ -501,6 +518,7 @@ def findMinimalProductCommunities(
             organism_variables=organism_variables,
             selected_products=selected_products,
             product_requirements=product_requirements,
+            medium=medium,
             tolerance=tolerance,
         )
     ]
