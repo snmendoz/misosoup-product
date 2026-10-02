@@ -2,7 +2,8 @@
 
 Blocked reactions are identified by FVA with every environmental exchange
 opened to +/- open_bound. The biomass reaction is deliberately excluded from
-exchange opening because gapseq can encode biomass with an R_EX_* identifier.
+exchange opening because gapseq can encode biomass with an R_EX_* identifier;
+instead, biomass is explicitly constrained to [0, open_bound].
 
 The reduced models are written as:
     <model_stem>_without_blocked_reactions.xml
@@ -73,10 +74,16 @@ def _environmental_exchange_ids(model) -> list[str]:
 
 
 def _open_exchange_constraints(model, open_bound: float) -> dict:
-    return {
+    """Open environmental exchanges and set biomass explicitly to [0, bound]."""
+    constraints = {
         rid: (-float(open_bound), float(open_bound))
         for rid in _environmental_exchange_ids(model)
     }
+    constraints[model.biomass_reaction] = (
+        0.0,
+        float(open_bound),
+    )
+    return constraints
 
 
 def _dispose_solver(solver) -> None:
@@ -276,6 +283,8 @@ def _prune_one(task: dict) -> dict:
         "biomass_reaction": str(biomass),
         "blocked_tolerance": tolerance,
         "open_exchange_bound": open_bound,
+        "biomass_lower_bound_fva": 0.0,
+        "biomass_upper_bound_fva": open_bound,
         "number_environmental_exchanges_opened": len(exchange_ids),
         "original_reactions": int(original_reactions),
         "blocked_reactions": len(blocked),
@@ -331,6 +340,8 @@ def _write_summary(path: Path, audits: list[dict]) -> None:
         "orphan_metabolites_removed",
         "remaining_metabolites",
         "number_environmental_exchanges_opened",
+        "biomass_lower_bound_fva",
+        "biomass_upper_bound_fva",
         "biomass_max_open_exchanges_before",
         "biomass_max_open_exchanges_after",
         "elapsed_seconds",
