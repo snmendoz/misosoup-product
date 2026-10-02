@@ -317,6 +317,53 @@ def main():
                 for value in exchange_results.values()
             )
 
+            nonoptimal_results = {
+                rid: value
+                for rid, value in exchange_results.items()
+                if value.get("status") != "optimal"
+                or value.get("maximum") is None
+            }
+            if nonoptimal_results:
+                yaml_dump_atomic(
+                    {
+                        "status": "partial",
+                        "configuration": scan_configuration,
+                        "candidate_exchange_reactions": list(
+                            scan_candidates
+                        ),
+                        "number_total_exchange_reactions": len(
+                            all_exchange_reactions
+                        ),
+                        "number_prefilter_candidates": len(
+                            scan_candidates
+                        ),
+                        "number_prefilter_excluded": len(
+                            prefilter_excluded
+                        ),
+                        "number_attempted": len(exchange_results),
+                        "number_completed_optimal": (
+                            len(exchange_results)
+                            - len(nonoptimal_results)
+                        ),
+                        "number_remaining_optimal": len(
+                            nonoptimal_results
+                        ),
+                        "cumulative_completed_solve_seconds": (
+                            scan_seconds
+                        ),
+                        "exchange_results": exchange_results,
+                    },
+                    scan_progress_path,
+                )
+                raise RuntimeError(
+                    "Product scan has non-optimal exchange solves; "
+                    "partial checkpoint preserved so they can be "
+                    "retried on the next run: "
+                    + ", ".join(
+                        sorted(nonoptimal_results)[:20]
+                    )
+                )
+
             filtered, filter_audit = filter_product_candidates(
                 community=community,
                 max_secretion=unfiltered,
