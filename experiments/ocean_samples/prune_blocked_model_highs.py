@@ -76,7 +76,11 @@ def _finite_or_none(value):
     return numeric
 
 
-def build_lp(model, open_bound: float):
+def build_lp(
+    model,
+    open_bound: float,
+    solver_tolerance: float,
+):
     reaction_ids = list(model.reactions.keys())
     metabolite_ids = list(model.metabolites.keys())
 
@@ -135,6 +139,7 @@ def build_lp(model, open_bound: float):
         "rhs": np.zeros(len(metabolite_ids), dtype=float),
         "bounds": bounds,
         "exchange_ids": sorted(exchanges),
+        "solver_tolerance": float(solver_tolerance),
     }
 
 
@@ -154,7 +159,15 @@ def solve_objective(lp, reaction_index: int, direction: str):
         b_eq=lp["rhs"],
         bounds=lp["bounds"],
         method="highs",
-        options={"presolve": True},
+        options={
+            "presolve": True,
+            "primal_feasibility_tolerance": lp[
+                "solver_tolerance"
+            ],
+            "dual_feasibility_tolerance": lp[
+                "solver_tolerance"
+            ],
+        },
     )
 
     if not result.success:
@@ -351,7 +364,16 @@ def main() -> None:
     original_reactions = len(model.reactions)
     original_metabolites = len(model.metabolites)
 
-    lp = build_lp(model, args.open_exchange_bound)
+    solver_tolerance = max(
+        1e-10,
+        min(1e-7, float(args.blocked_tolerance)),
+    )
+
+    lp = build_lp(
+        model,
+        args.open_exchange_bound,
+        solver_tolerance,
+    )
     biomass_before = maximum_biomass(model, lp)
 
     fva_start = perf_counter()
@@ -374,7 +396,11 @@ def main() -> None:
 
     orphan_metabolites = remove_orphan_metabolites(model)
 
-    reduced_lp = build_lp(model, args.open_exchange_bound)
+    reduced_lp = build_lp(
+        model,
+        args.open_exchange_bound,
+        solver_tolerance,
+    )
     biomass_after = maximum_biomass(model, reduced_lp)
 
     comparison_tolerance = max(
@@ -409,6 +435,9 @@ def main() -> None:
         "model_id": str(model.id),
         "biomass_reaction": str(biomass),
         "blocked_tolerance": float(args.blocked_tolerance),
+        "solver_feasibility_tolerance": float(
+            solver_tolerance
+        ),
         "open_exchange_bound": float(args.open_exchange_bound),
         "biomass_lower_bound_fva": 0.0,
         "biomass_upper_bound_fva": float(
