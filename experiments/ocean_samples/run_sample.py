@@ -22,7 +22,7 @@ from common import (
 )
 from misosoup.library.product_filter import filter_product_candidates
 from misosoup.library.product_reference import (
-    constrain_full_community,
+    constrain_full_community_lp,
     find_producible_exchanges,
 )
 from misosoup.library.minimal_product_communities import (
@@ -625,7 +625,7 @@ def main() -> None:
         )
         community_build = elapsed(t)
 
-        constrain_full_community(
+        constrain_full_community_lp(
             community,
             minimal_growth=args.minimal_growth,
         )
