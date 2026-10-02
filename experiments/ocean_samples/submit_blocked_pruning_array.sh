@@ -15,9 +15,20 @@ mkdir -p "$OUTPUT_DIR" "$RUN_DIR/logs"
 
 cd "$HOME/misosoup_product"
 
+PYTHON="${OCEAN_PRUNE_PYTHON:-$HOME/anaconda3/envs/misosoup/bin/python}"
+if [[ ! -x "$PYTHON" ]]; then
+  echo "ERROR: Python executable not found: $PYTHON" >&2
+  exit 1
+fi
+
+"$PYTHON" -c 'import reframed, scipy' || {
+  echo "ERROR: misosoup Python environment is missing reframed or scipy." >&2
+  exit 1
+}
+
 LIST_FILE="$RUN_DIR/pending_models.txt"
 
-python experiments/ocean_samples/prepare_blocked_prune_pending.py \
+"$PYTHON" experiments/ocean_samples/prepare_blocked_prune_pending.py \
   --source-dir "$SOURCE_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --output-list "$LIST_FILE" \
