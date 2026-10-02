@@ -5,7 +5,7 @@ from time import perf_counter
 
 from reframed.solvers.solution import Status
 
-from ..reframed.layered_community import LayeredCommunity
+from ..reframed.layered_community import BOUND_INF, LayeredCommunity
 
 
 def get_community_exchanges(community: LayeredCommunity) -> list:
@@ -39,19 +39,79 @@ def constrain_full_community(
     community.solver.update()
 
 
+def constrain_full_community_lp(
+    community: LayeredCommunity,
+    minimal_growth: float = 0.01,
+) -> None:
+    """Force every organism active with direct bounds and no y_j binaries."""
+    if minimal_growth <= 0:
+        raise ValueError("minimal_growth must be > 0.")
+
+    if community.has_binary_variables:
+        raise ValueError(
+            "constrain_full_community_lp requires a community without "
+            "organism binary variables."
+        )
+
+    fixed_bounds = {}
+
+    for org_id, org_model in community.organisms.items():
+        biomass_rid = org_model.biomass_reaction
+
+        for r_id in org_model.reactions:
+            if not r_id.startswith("R_EX") and r_id != biomass_rid:
+                continue
+
+            merged_id = community.reaction_map[(org_id, r_id)]
+
+            if r_id == biomass_rid:
+                fixed_bounds[merged_id] = (minimal_growth, BOUND_INF)
+            elif r_id.startswith("R_EX"):
+                fixed_bounds[merged_id] = (-BOUND_INF, BOUND_INF)
+
+    community.solver.set_bounds(fixed_bounds)
+    community.solver.update()
+
+    print(
+        "Full-community reference configured as a pure LP: "
+        f"{len(community.organisms)} organisms forced active with "
+        f"growth >= {minimal_growth:.8g}; "
+        f"{len(fixed_bounds)} direct reaction bounds; "
+        "0 organism y_j binaries.",
+        flush=True,
+    )
+
 def find_producible_exchanges(
     community: LayeredCommunity,
     tolerance: float = 1e-6,
 ) -> dict:
     """Compute maximum secretion of every global community exchange."""
-    exchanges = get_community_exchanges(community)
+    exchanges = sorted(get_community_exchanges(community))
     producible = {}
+
+    gurobi_model = community.solver.problem
+    gurobi_model.update()
+
+    if gurobi_model.NumIntVars != 0:
+        raise RuntimeError(
+            "Product scan must be a pure LP, but Gurobi reports "
+            f"{gurobi_model.NumIntVars} integer variables "
+            f"({gurobi_model.NumBinVars} binary)."
+        )
 
     total_exchanges = len(exchanges)
     scan_start = perf_counter()
 
     print(
         f"Product scan: {total_exchanges} exchange reactions found.",
+        flush=True,
+    )
+    print(
+        "Product scan LP: "
+        f"variables={gurobi_model.NumVars}; "
+        f"linear_constraints={gurobi_model.NumConstrs}; "
+        f"general_constraints={gurobi_model.NumGenConstrs}; "
+        "integer_variables=0; binary_variables=0.",
         flush=True,
     )
 
