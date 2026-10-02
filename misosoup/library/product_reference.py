@@ -69,8 +69,28 @@ def constrain_full_community_lp(
             elif r_id.startswith("R_EX"):
                 fixed_bounds[merged_id] = (-BOUND_INF, BOUND_INF)
 
-    community.solver.set_bounds(fixed_bounds)
-    community.solver.update()
+    gurobi_model = community.solver.problem
+    gurobi_model.update()
+
+    missing_variables = []
+
+    for rid, (lower_bound, upper_bound) in fixed_bounds.items():
+        variable = gurobi_model.getVarByName(rid)
+
+        if variable is None:
+            missing_variables.append(rid)
+            continue
+
+        variable.LB = lower_bound
+        variable.UB = upper_bound
+
+    if missing_variables:
+        raise RuntimeError(
+            "Unable to apply full-community LP bounds; missing solver "
+            "variables: " + ", ".join(missing_variables[:20])
+        )
+
+    gurobi_model.update()
 
     print(
         "Full-community reference configured as a pure LP: "
