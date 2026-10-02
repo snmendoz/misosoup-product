@@ -792,7 +792,8 @@ def solvepFBAUsingFixProducts(
 
     The formulation is:
 
-        all y_j = 1
+        biomass_j >= minimal_growth for every organism j
+        no organism-selection binaries
         v_i >= alpha M_i
         0 <= q_i <= 1
         v_i >= M_i q_i
@@ -847,7 +848,8 @@ def solvepFBAUsingFixProducts(
 
     print(
         f"Stage C.0: fresh community with {len(community.organisms)} organisms; "
-        f"{len(selected_products)} selected products; preparing pFBA reference problem.",
+        f"{len(selected_products)} selected products; preparing pure-LP pFBA "
+        "reference problem.",
         flush=True,
     )
 
