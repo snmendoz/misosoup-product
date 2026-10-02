@@ -81,6 +81,12 @@ def main():
         )
         stage_c_seconds = perf_counter() - t
 
+        stage_c_checkpoint = {
+            key: value
+            for key, value in stage_c.items()
+            if key != "stage_c_solution"
+        }
+
         checkpoint = {
             "status": "complete",
             "sample": {
@@ -102,7 +108,7 @@ def main():
                 **medium_file_audit,
                 **medium_audit,
             },
-            "stage_c": stage_c,
+            "stage_c": stage_c_checkpoint,
             "timing_seconds": {
                 "model_loading": float(load_seconds),
                 "community_build": float(build_seconds),
