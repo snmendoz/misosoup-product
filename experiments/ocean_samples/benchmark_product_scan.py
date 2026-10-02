@@ -14,9 +14,11 @@ from common import (
     resolve_medium_for_community,
     yaml_load,
 )
+from misosoup.library.product_filter import filter_exchange_candidates
 from misosoup.library.product_reference import (
     constrain_full_community_lp,
     find_producible_exchanges,
+    get_community_exchanges,
 )
 from misosoup.library.readwrite import load_models
 from misosoup.reframed.layered_community import LayeredCommunity
@@ -32,6 +34,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--production-tolerance", type=float, default=1e-6)
     parser.add_argument("--integer-tolerance", type=float, default=1e-9)
     parser.add_argument("--uptake-bound", type=float, default=-1000.0)
+    parser.add_argument(
+        "--keep-oxygen",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return parser.parse_args()
 
 
@@ -144,18 +151,41 @@ def main() -> None:
             "Benchmark community is not feasible under the selected medium."
         )
 
+    all_exchange_reactions = sorted(
+        get_community_exchanges(community)
+    )
+    scan_candidates, prefilter_audit = filter_exchange_candidates(
+        community=community,
+        exchange_reactions=all_exchange_reactions,
+        keep_oxygen=args.keep_oxygen,
+    )
+    excluded_count = sum(
+        not info["keep"]
+        for info in prefilter_audit.values()
+    )
+    print(
+        "Product prefilter: "
+        f"{len(all_exchange_reactions)} total exchanges -> "
+        f"{len(scan_candidates)} selected for optimization; "
+        f"{excluded_count} excluded before LP solves.",
+        flush=True,
+    )
+
     scan_start = perf_counter()
     producible = find_producible_exchanges(
         community,
         tolerance=args.production_tolerance,
         max_exchanges=args.exchanges,
+        exchange_reactions=scan_candidates,
     )
     scan_time = perf_counter() - scan_start
 
     print("=" * 78, flush=True)
     print(
-        f"BENCHMARK COMPLETE: {args.exchanges} exchanges in "
-        f"{scan_time:.3f}s; average={scan_time / args.exchanges:.3f}s/exchange; "
+        f"BENCHMARK COMPLETE: {min(args.exchanges, len(scan_candidates))} "
+        "prefiltered exchanges in "
+        f"{scan_time:.3f}s; average="
+        f"{scan_time / min(args.exchanges, len(scan_candidates)):.3f}s/exchange; "
         f"producible={len(producible)}; "
         f"total_wall={perf_counter() - total_start:.3f}s.",
         flush=True,
