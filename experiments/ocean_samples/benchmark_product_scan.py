@@ -170,6 +170,11 @@ def main() -> None:
         f"{excluded_count} excluded before LP solves.",
         flush=True,
     )
+    if not scan_candidates:
+        raise RuntimeError(
+            "Product prefilter removed every global exchange; "
+            "benchmark has nothing to optimize."
+        )
 
     scan_start = perf_counter()
     producible = find_producible_exchanges(
