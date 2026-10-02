@@ -108,3 +108,32 @@ def test_prefilter_can_exclude_oxygen():
 
     assert "R_EX_o2_e0" not in selected
     assert audit["R_EX_o2_e0"]["reason"] == "oxygen_excluded"
+
+
+def test_gapseq_modelseed_oxygen_is_configurable():
+    """ModelSEED cpd00007 must be treated as molecular oxygen."""
+    community = _community(
+        {
+            "R_EX_cpd00007_e0": (
+                "M_cpd00007_e0",
+                "O2",
+                "O2",
+            ),
+        }
+    )
+
+    selected, audit = filter_exchange_candidates(
+        community,
+        ["R_EX_cpd00007_e0"],
+        keep_oxygen=True,
+    )
+    assert selected == ["R_EX_cpd00007_e0"]
+    assert audit["R_EX_cpd00007_e0"]["reason"] == "oxygen_kept"
+
+    selected, audit = filter_exchange_candidates(
+        community,
+        ["R_EX_cpd00007_e0"],
+        keep_oxygen=False,
+    )
+    assert selected == []
+    assert audit["R_EX_cpd00007_e0"]["reason"] == "oxygen_excluded"
