@@ -81,6 +81,30 @@ def main():
         print("=" * 78, flush=True)
 
         models, _, _, load_seconds = load_sample_models(sample)
+
+        model_sources = []
+        for entry in sample["mags"]:
+            model_path = Path(
+                entry["model_path"]
+            ).expanduser().resolve()
+            stat = model_path.stat()
+            model_sources.append(
+                {
+                    "mag_id": str(entry["mag_id"]),
+                    "path": str(model_path),
+                    "size_bytes": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                }
+            )
+
+        medium_path = args.medium_file.expanduser().resolve()
+        medium_stat = medium_path.stat()
+        medium_fingerprint = {
+            "path": str(medium_path),
+            "size_bytes": int(medium_stat.st_size),
+            "mtime_ns": int(medium_stat.st_mtime_ns),
+        }
+
         params = solver_params(args.production_tolerance, args.integer_tolerance)
 
         t = perf_counter()
@@ -154,15 +178,19 @@ def main():
 
         scan_configuration = {
             "checkpoint_version": 2,
+            "sample_id": str(sample["sample_id"]),
+            "manifest_file": str(
+                args.manifest.expanduser().resolve()
+            ),
+            "model_sources": model_sources,
             "minimal_growth": float(args.minimal_growth),
             "production_tolerance": float(
                 args.production_tolerance
             ),
             "keep_oxygen": bool(args.keep_oxygen),
             "prefilter_before_optimization": True,
-            "medium_file": str(
-                args.medium_file.expanduser().resolve()
-            ),
+            "medium_file": str(medium_path),
+            "medium_fingerprint": medium_fingerprint,
         }
 
         def scan_state_matches(payload: dict) -> bool:
@@ -184,8 +212,18 @@ def main():
                     )
                 )
                 is True
+                and str(configuration.get("sample_id", ""))
+                == str(sample["sample_id"])
+                and str(configuration.get("manifest_file", ""))
+                == str(args.manifest.expanduser().resolve())
+                and list(configuration.get("model_sources", []))
+                == list(model_sources)
                 and str(configuration.get("medium_file", ""))
-                == str(args.medium_file.expanduser().resolve())
+                == str(medium_path)
+                and dict(
+                    configuration.get("medium_fingerprint", {})
+                )
+                == dict(medium_fingerprint)
                 and list(
                     payload.get("candidate_exchange_reactions", [])
                 )
