@@ -1,6 +1,7 @@
 """Reference metabolic production profile for microbial communities."""
 
 import logging
+from time import perf_counter
 
 from reframed.solvers.solution import Status
 
@@ -46,23 +47,41 @@ def find_producible_exchanges(
     exchanges = get_community_exchanges(community)
     producible = {}
 
+    total_exchanges = len(exchanges)
+    scan_start = perf_counter()
+
+    print(
+        f"Product scan: {total_exchanges} exchange reactions found.",
+        flush=True,
+    )
+
     logging.info(
         "Scanning %i community exchange reactions.",
-        len(exchanges),
+        total_exchanges,
     )
 
     for index, rid in enumerate(exchanges, start=1):
+        solve_start = perf_counter()
         solution = community.solver.solve(
             objective={rid: 1},
             get_values=[rid],
             minimize=False,
         )
 
+        solve_time = perf_counter() - solve_start
+        elapsed_time = perf_counter() - scan_start
+
         if solution.status != Status.OPTIMAL:
             logging.warning(
                 "Unable to maximize %s. Solver status: %s",
                 rid,
                 solution.status,
+            )
+            print(
+                f"Optimization {index}/{total_exchanges} finished: "
+                f"{rid} status={solution.status} "
+                f"solve={solve_time:.3f}s elapsed={elapsed_time:.3f}s",
+                flush=True,
             )
             continue
 
@@ -71,10 +90,17 @@ def find_producible_exchanges(
         if maximum > tolerance:
             producible[rid] = maximum
 
+        print(
+            f"Optimization {index}/{total_exchanges} finished: "
+            f"{rid} max={maximum:.8g} "
+            f"solve={solve_time:.3f}s elapsed={elapsed_time:.3f}s",
+            flush=True,
+        )
+
         logging.debug(
             "[%i/%i] %s = %.8g",
             index,
-            len(exchanges),
+            total_exchanges,
             rid,
             maximum,
         )
