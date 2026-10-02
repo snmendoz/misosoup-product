@@ -30,7 +30,7 @@ from common import yaml_dump_atomic, yaml_load
 from misosoup.library.readwrite import load_models
 
 
-SOLVER_BACKEND = "scipy-highs-blockedness-fva-v1"
+SOLVER_BACKEND = "scipy-highs-blockedness-fva-v2-finite-bounds"
 
 
 def source_fingerprint(path: Path) -> dict:
@@ -65,13 +65,16 @@ def environmental_exchange_ids(model) -> list[str]:
     return sorted(set(ids))
 
 
-def _finite_or_none(value):
+def _finite_or_capped(value, infinite_bound: float):
+    """Replace infinite model bounds with a finite symmetric cap."""
     if value is None:
         return None
 
     numeric = float(value)
-    if math.isinf(numeric):
-        return None
+    if numeric == math.inf:
+        return float(infinite_bound)
+    if numeric == -math.inf:
+        return -float(infinite_bound)
 
     return numeric
 
@@ -127,8 +130,8 @@ def build_lp(
         else:
             bounds.append(
                 (
-                    _finite_or_none(reaction.lb),
-                    _finite_or_none(reaction.ub),
+                    _finite_or_capped(reaction.lb, open_bound),
+                    _finite_or_capped(reaction.ub, open_bound),
                 )
             )
 
