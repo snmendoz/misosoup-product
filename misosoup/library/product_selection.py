@@ -63,6 +63,7 @@ from reframed.solvers.solution import Status
 from reframed.solvers.solver import VarType
 
 from ..reframed.layered_community import LayeredCommunity, BOUND_INF
+from .product_reference import constrain_full_community_lp
 
 
 # ======================================================================
@@ -850,33 +851,17 @@ def solvepFBAUsingFixProducts(
         flush=True,
     )
 
-    # Recreate the same organism activity/growth coupling used by A/B.
-    community.setup_binary_variables(
-        minimal_growth
+    # Stage C uses the full reference community. Since every organism is
+    # fixed active a priori, no organism-selection binaries are needed.
+    # Apply the y_j=1 state directly as continuous reaction bounds.
+    constrain_full_community_lp(
+        community,
+        minimal_growth=minimal_growth,
     )
 
     community.setup_medium(
         medium
     )
-
-    organism_expression = {
-        f"y_{org_id}": 1
-        for org_id in community.organisms
-    }
-
-    # Force the complete reference community:
-    #
-    #     sum_j y_j = N
-    #
-    # Since every y_j is binary, all organisms are active.
-    community.solver.add_constraint(
-        "c_stageC_full_community",
-        organism_expression,
-        "=",
-        len(organism_expression),
-    )
-
-    community.solver.update()
 
     print(
         "Stage C.0: full-community activity and medium constraints installed.",
