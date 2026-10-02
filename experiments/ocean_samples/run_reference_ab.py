@@ -52,6 +52,11 @@ def parse_args():
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument(
+        "--stop-after-product-scan",
+        action="store_true",
+        help="Run only the individual exchange-maximization product scan.",
+    )
     return parser.parse_args()
 
 
@@ -462,6 +467,65 @@ def main():
                 f"{scan_seconds:.3f}s; final checkpoint written.",
                 flush=True,
             )
+
+        if args.stop_after_product_scan:
+            fva_checkpoint = {
+                "status": "complete",
+                "sample": {
+                    "index": int(args.sample_index),
+                    "sample_id": str(sample["sample_id"]),
+                    "number_modeled_mags": int(sample["number_modeled_mags"]),
+                },
+                "configuration": {
+                    "minimal_growth": float(args.minimal_growth),
+                    "production_tolerance": float(args.production_tolerance),
+                    "uptake_bound": float(args.uptake_bound),
+                    "keep_oxygen": bool(args.keep_oxygen),
+                    "medium_file": str(medium_path),
+                },
+                "medium": {
+                    **medium_file_audit,
+                    **medium_audit,
+                },
+                "individual_product_maxima": {
+                    "number_total_exchange_reactions": len(
+                        all_exchange_reactions
+                    ),
+                    "number_prefilter_candidates": len(scan_candidates),
+                    "number_prefilter_excluded": len(prefilter_excluded),
+                    "number_unfiltered_producible_exchanges": len(unfiltered),
+                    "number_filtered_products": len(filtered),
+                    "unfiltered_max_secretion": {
+                        rid: float(value)
+                        for rid, value in unfiltered.items()
+                    },
+                    "filtered_max_secretion": {
+                        rid: float(value)
+                        for rid, value in filtered.items()
+                    },
+                    "prefilter_audit": prefilter_audit,
+                    "filter_audit": filter_audit,
+                },
+                "timing_seconds": {
+                    "model_loading": float(load_seconds),
+                    "community_build": float(build_seconds),
+                    "feasibility": float(feasibility_seconds),
+                    "individual_product_scan": float(scan_seconds),
+                    "total": float(perf_counter() - total_start),
+                },
+            }
+            yaml_dump_atomic(
+                fva_checkpoint,
+                stage_dir / "fva_complete.yaml",
+            )
+            print(
+                "FVA / PRODUCT SCAN COMPLETE: "
+                f"{len(unfiltered)} producible exchanges; "
+                f"{len(filtered)} filtered products; "
+                f"total={perf_counter() - total_start:.3f}s.",
+                flush=True,
+            )
+            return
 
         t = perf_counter()
         stage_a = getMaxProduct(
