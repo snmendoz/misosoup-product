@@ -44,6 +44,7 @@ TARGET_ELEMENTS = {"C", "N", "S", "P"}
 # Molecular oxygen is deliberately treated as a separate configurable class.
 OXYGEN_IDS = {
     "o2",
+    "cpd00007",  # ModelSEED/gapseq molecular oxygen
 }
 
 
@@ -171,7 +172,10 @@ def _classify_exchange_candidate(
             "contains_target_element:"
             + ",".join(matched_target_elements)
         )
-    elif normalized_id in OXYGEN_IDS:
+    elif (
+        normalized_id in OXYGEN_IDS
+        or str(formula).strip().upper() == "O2"
+    ):
         keep = bool(keep_oxygen)
         reason = (
             "oxygen_kept"
