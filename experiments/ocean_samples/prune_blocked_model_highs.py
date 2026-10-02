@@ -31,6 +31,7 @@ from misosoup.library.readwrite import load_models
 
 
 SOLVER_BACKEND = "scipy-highs-blockedness-fva-v2-finite-bounds"
+INFINITE_BOUND_CAP = 1000.0
 
 
 def source_fingerprint(path: Path) -> dict:
@@ -130,8 +131,12 @@ def build_lp(
         else:
             bounds.append(
                 (
-                    _finite_or_capped(reaction.lb, open_bound),
-                    _finite_or_capped(reaction.ub, open_bound),
+                    _finite_or_capped(
+                        reaction.lb, INFINITE_BOUND_CAP
+                    ),
+                    _finite_or_capped(
+                        reaction.ub, INFINITE_BOUND_CAP
+                    ),
                 )
             )
 
@@ -442,6 +447,7 @@ def main() -> None:
             solver_tolerance
         ),
         "open_exchange_bound": float(args.open_exchange_bound),
+        "infinite_reaction_bound_cap": float(INFINITE_BOUND_CAP),
         "biomass_lower_bound_fva": 0.0,
         "biomass_upper_bound_fva": float(
             args.open_exchange_bound
