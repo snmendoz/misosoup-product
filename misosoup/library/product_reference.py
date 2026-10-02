@@ -84,9 +84,20 @@ def constrain_full_community_lp(
 def find_producible_exchanges(
     community: LayeredCommunity,
     tolerance: float = 1e-6,
+    max_exchanges: int | None = None,
 ) -> dict:
-    """Compute maximum secretion of every global community exchange."""
+    """Compute maximum secretion of global community exchanges.
+
+    max_exchanges is intended for deterministic benchmarks and tests.
+    None scans every exchange; a positive integer scans only the first
+    N exchange IDs after sorting.
+    """
     exchanges = sorted(get_community_exchanges(community))
+
+    if max_exchanges is not None:
+        if max_exchanges < 1:
+            raise ValueError("max_exchanges must be >= 1 or None.")
+        exchanges = exchanges[:max_exchanges]
     producible = {}
 
     gurobi_model = community.solver.problem
@@ -102,8 +113,14 @@ def find_producible_exchanges(
     total_exchanges = len(exchanges)
     scan_start = perf_counter()
 
+    if max_exchanges is None:
+        scan_label = "full"
+    else:
+        scan_label = f"benchmark limit={max_exchanges}"
+
     print(
-        f"Product scan: {total_exchanges} exchange reactions found.",
+        f"Product scan: {total_exchanges} exchange reactions selected "
+        f"({scan_label}).",
         flush=True,
     )
     print(
