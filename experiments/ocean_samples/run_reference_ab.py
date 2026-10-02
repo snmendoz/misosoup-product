@@ -151,7 +151,7 @@ def main():
                 ].items()
             }
             filter_audit = cached_scan["filter_audit"]
-            scan_seconds = 0.0
+            scan_seconds = float(cached_scan.get("scan_seconds", 0.0))
             print(
                 f"Product scan checkpoint reused: "
                 f"{len(unfiltered)} producible -> "
