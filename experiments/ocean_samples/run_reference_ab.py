@@ -143,6 +143,11 @@ def main():
             f"{len(prefilter_excluded)} excluded before LP solves.",
             flush=True,
         )
+        if not scan_candidates:
+            raise RuntimeError(
+                "Product prefilter removed every global exchange; "
+                "there are no candidate products to optimize."
+            )
 
         scan_checkpoint_path = stage_dir / "product_scan.yaml"
 
