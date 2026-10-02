@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit the staged ocean workflow from an existing manifest.
+# Submit the staged 159-sample ocean workflow.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,8 +10,9 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
 fi
 
 MANIFEST="$(readlink -f "$1")"
-OUTPUT_ROOT="$2"
+OUTPUT_ROOT="$(readlink -m "$2")"
 MEDIUM_FILE="${3:-$HOME/misosoup_product/experiments/ocean_samples/media/complex_media_gapseq2.csv}"
+MEDIUM_FILE="$(readlink -f "$MEDIUM_FILE")"
 
 mkdir -p "$OUTPUT_ROOT/logs" "$OUTPUT_ROOT/samples"
 
@@ -26,17 +27,22 @@ PY
 
 ARRAY_LAST=$((N_SAMPLES - 1))
 ARRAY_RANGE="${OCEAN_ARRAY_RANGE:-0-${ARRAY_LAST}}"
-MAX_CONCURRENT="${OCEAN_MAX_CONCURRENT:-2}"
-ARRAY_SPEC="${ARRAY_RANGE}%${MAX_CONCURRENT}"
 
-if (( MAX_CONCURRENT > 2 )); then
+# Product Scan has no artificial array throttle: SLURM decides how many
+# sample jobs can run at once.  Gurobi stages remain limited to the WLS
+# concurrency available to this project.
+PRODUCT_ARRAY_SPEC="$ARRAY_RANGE"
+GUROBI_MAX_CONCURRENT="${OCEAN_GUROBI_MAX_CONCURRENT:-2}"
+GUROBI_ARRAY_SPEC="${ARRAY_RANGE}%${GUROBI_MAX_CONCURRENT}"
+
+if (( GUROBI_MAX_CONCURRENT > 2 )); then
   echo "ERROR: current Gurobi WLS baseline supports only 2 concurrent sessions." >&2
   exit 1
 fi
 
 export OCEAN_MANIFEST="$MANIFEST"
-export OCEAN_OUTPUT_ROOT="$(readlink -m "$OUTPUT_ROOT")"
-export OCEAN_MEDIUM_FILE="$(readlink -f "$MEDIUM_FILE")"
+export OCEAN_OUTPUT_ROOT="$OUTPUT_ROOT"
+export OCEAN_MEDIUM_FILE="$MEDIUM_FILE"
 export OCEAN_ALPHA="${OCEAN_ALPHA:-0.20}"
 export OCEAN_MINIMAL_GROWTH="${OCEAN_MINIMAL_GROWTH:-0.01}"
 export OCEAN_PRODUCT_RETENTION="${OCEAN_PRODUCT_RETENTION:-0.90}"
@@ -47,25 +53,40 @@ export OCEAN_UPTAKE_BOUND="${OCEAN_UPTAKE_BOUND:--1000}"
 export OCEAN_MAX_MIN_COMMS="${OCEAN_MAX_MIN_COMMS:-100}"
 export OCEAN_KEEP_OXYGEN_FLAG="${OCEAN_KEEP_OXYGEN_FLAG:---keep-oxygen}"
 
+MAIL_USER="${OCEAN_MAIL_USER:-smendoza@cmm.uchile.cl}"
+
 QC_JOB="$(sbatch --parsable \
   --job-name=ocean_qc \
   --partition="${OCEAN_QC_PARTITION:-general}" \
   --cpus-per-task="${OCEAN_QC_CPUS:-2}" \
   --mem="${OCEAN_QC_MEM:-8G}" \
-  --time="${OCEAN_QC_TIME:-12:00:00}" \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/qc_%j.out" \
   --error="$OUTPUT_ROOT/logs/qc_%j.err" \
   "$SCRIPT_DIR/global_qc.slurm")"
 QC_JOB="${QC_JOB%%;*}"
 
-AB_JOB="$(sbatch --parsable \
+PRODUCT_JOB="$(sbatch --parsable \
   --dependency="afterok:${QC_JOB}" \
+  --job-name=ocean_product_scan \
+  --partition="${OCEAN_PRODUCT_SCAN_PARTITION:-general}" \
+  --cpus-per-task="${OCEAN_PRODUCT_SCAN_CPUS:-8}" \
+  --mem="${OCEAN_PRODUCT_SCAN_MEM:-32G}" \
+  --array="$PRODUCT_ARRAY_SPEC" \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
+  --output="$OUTPUT_ROOT/logs/product_scan_%A_%a.out" \
+  --error="$OUTPUT_ROOT/logs/product_scan_%A_%a.err" \
+  "$SCRIPT_DIR/product_scan_parallel_array.slurm")"
+PRODUCT_JOB="${PRODUCT_JOB%%;*}"
+
+AB_JOB="$(sbatch --parsable \
+  --dependency="afterok:${PRODUCT_JOB}" \
   --job-name=ocean_ab \
   --partition="${OCEAN_AB_PARTITION:-general}" \
-  --cpus-per-task="${OCEAN_AB_CPUS:-3}" \
-  --mem="${OCEAN_AB_MEM:-12G}" \
-  --time="${OCEAN_AB_TIME:-12:00:00}" \
-  --array="$ARRAY_SPEC" \
+  --cpus-per-task="${OCEAN_AB_CPUS:-2}" \
+  --mem="${OCEAN_AB_MEM:-16G}" \
+  --array="$GUROBI_ARRAY_SPEC" \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/ab_%A_%a.out" \
   --error="$OUTPUT_ROOT/logs/ab_%A_%a.err" \
   "$SCRIPT_DIR/reference_ab_array.slurm")"
@@ -77,8 +98,8 @@ C_JOB="$(sbatch --parsable \
   --partition="${OCEAN_C_PARTITION:-largemem}" \
   --cpus-per-task="${OCEAN_C_CPUS:-2}" \
   --mem="${OCEAN_C_MEM:-32G}" \
-  --time="${OCEAN_C_TIME:-12:00:00}" \
-  --array="$ARRAY_SPEC" \
+  --array="$GUROBI_ARRAY_SPEC" \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/c_%A_%a.out" \
   --error="$OUTPUT_ROOT/logs/c_%A_%a.err" \
   "$SCRIPT_DIR/stage_c_array.slurm")"
@@ -90,8 +111,8 @@ D_JOB="$(sbatch --parsable \
   --partition="${OCEAN_D_PARTITION:-largemem}" \
   --cpus-per-task="${OCEAN_D_CPUS:-2}" \
   --mem="${OCEAN_D_MEM:-24G}" \
-  --time="${OCEAN_D_TIME:-12:00:00}" \
-  --array="$ARRAY_SPEC" \
+  --array="$GUROBI_ARRAY_SPEC" \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/d_%A_%a.out" \
   --error="$OUTPUT_ROOT/logs/d_%A_%a.err" \
   "$SCRIPT_DIR/stage_d_array.slurm")"
@@ -103,7 +124,7 @@ COLLECT_JOB="$(sbatch --parsable \
   --partition=debug \
   --cpus-per-task=1 \
   --mem=2G \
-  --time=00:10:00 \
+  --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/collect_%j.out" \
   --error="$OUTPUT_ROOT/logs/collect_%j.err" \
   "$SCRIPT_DIR/collect_results.slurm")"
@@ -114,26 +135,33 @@ manifest=$MANIFEST
 output_root=$OUTPUT_ROOT
 medium_file=$OCEAN_MEDIUM_FILE
 number_samples=$N_SAMPLES
-array_spec=$ARRAY_SPEC
+product_array_spec=$PRODUCT_ARRAY_SPEC
+gurobi_array_spec=$GUROBI_ARRAY_SPEC
 qc_job=$QC_JOB
+product_scan_job=$PRODUCT_JOB
 reference_ab_job=$AB_JOB
 stage_c_job=$C_JOB
 stage_d_job=$D_JOB
 collector_job=$COLLECT_JOB
 qc_resources=${OCEAN_QC_CPUS:-2}CPU/${OCEAN_QC_MEM:-8G}
-ab_resources=${OCEAN_AB_CPUS:-3}CPU/${OCEAN_AB_MEM:-12G}
+product_scan_resources=${OCEAN_PRODUCT_SCAN_CPUS:-8}CPU/${OCEAN_PRODUCT_SCAN_MEM:-32G}
+ab_resources=${OCEAN_AB_CPUS:-2}CPU/${OCEAN_AB_MEM:-16G}
 c_resources=${OCEAN_C_CPUS:-2}CPU/${OCEAN_C_MEM:-32G}
 d_resources=${OCEAN_D_CPUS:-2}CPU/${OCEAN_D_MEM:-24G}
+explicit_walltime=none
 EOF
 
 echo "============================================================"
 echo "Staged ocean pipeline submitted"
-echo "QC             : $QC_JOB  (${OCEAN_QC_CPUS:-2} CPU, ${OCEAN_QC_MEM:-8G})"
-echo "Reference+A+B  : $AB_JOB  (${OCEAN_AB_CPUS:-3} CPU, ${OCEAN_AB_MEM:-12G})"
-echo "Stage C        : $C_JOB  (${OCEAN_C_CPUS:-2} CPU, ${OCEAN_C_MEM:-32G})"
-echo "Stage D        : $D_JOB  (${OCEAN_D_CPUS:-2} CPU, ${OCEAN_D_MEM:-24G})"
+echo "QC             : $QC_JOB"
+echo "Product Scan   : $PRODUCT_JOB  (${OCEAN_PRODUCT_SCAN_CPUS:-8} workers/sample)"
+echo "Stage A+B      : $AB_JOB"
+echo "Stage C        : $C_JOB"
+echo "Stage D        : $D_JOB"
 echo "Collector      : $COLLECT_JOB"
-echo "Array          : $ARRAY_SPEC"
+echo "Product array  : $PRODUCT_ARRAY_SPEC (no artificial throttle)"
+echo "Gurobi array   : $GUROBI_ARRAY_SPEC"
+echo "Explicit time  : none"
 echo "Output         : $OUTPUT_ROOT"
 echo "============================================================"
-echo "squeue -j $QC_JOB,$AB_JOB,$C_JOB,$D_JOB,$COLLECT_JOB"
+echo "squeue -j $QC_JOB,$PRODUCT_JOB,$AB_JOB,$C_JOB,$D_JOB,$COLLECT_JOB"
