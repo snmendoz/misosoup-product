@@ -150,22 +150,53 @@ def main():
             )
 
         scan_checkpoint_path = stage_dir / "product_scan.yaml"
+        scan_progress_path = stage_dir / "product_scan_partial.yaml"
+
+        scan_configuration = {
+            "checkpoint_version": 2,
+            "minimal_growth": float(args.minimal_growth),
+            "production_tolerance": float(
+                args.production_tolerance
+            ),
+            "keep_oxygen": bool(args.keep_oxygen),
+            "prefilter_before_optimization": True,
+            "medium_file": str(
+                args.medium_file.expanduser().resolve()
+            ),
+        }
+
+        def scan_state_matches(payload: dict) -> bool:
+            configuration = payload.get("configuration", {})
+            return (
+                int(configuration.get("checkpoint_version", -1)) == 2
+                and float(configuration.get("minimal_growth", -1))
+                == float(args.minimal_growth)
+                and float(
+                    configuration.get("production_tolerance", -1)
+                )
+                == float(args.production_tolerance)
+                and bool(configuration.get("keep_oxygen", False))
+                == bool(args.keep_oxygen)
+                and bool(
+                    configuration.get(
+                        "prefilter_before_optimization",
+                        False,
+                    )
+                )
+                is True
+                and str(configuration.get("medium_file", ""))
+                == str(args.medium_file.expanduser().resolve())
+                and list(
+                    payload.get("candidate_exchange_reactions", [])
+                )
+                == list(scan_candidates)
+            )
 
         if scan_checkpoint_path.exists():
             cached_scan = yaml_load(scan_checkpoint_path)
-            cached_config = cached_scan.get("configuration", {})
             cache_matches = (
                 cached_scan.get("status") == "complete"
-                and float(cached_config.get("minimal_growth", -1))
-                == float(args.minimal_growth)
-                and float(cached_config.get("production_tolerance", -1))
-                == float(args.production_tolerance)
-                and bool(cached_config.get("keep_oxygen", False))
-                == bool(args.keep_oxygen)
-                and bool(cached_config.get("prefilter_before_optimization", False))
-                is True
-                and str(cached_config.get("medium_file", ""))
-                == str(args.medium_file.expanduser().resolve())
+                and scan_state_matches(cached_scan)
             )
         else:
             cache_matches = False
@@ -193,13 +224,98 @@ def main():
                 flush=True,
             )
         else:
+            exchange_results = {}
+
+            if scan_progress_path.exists():
+                partial_scan = yaml_load(scan_progress_path)
+
+                if scan_state_matches(partial_scan):
+                    exchange_results = dict(
+                        partial_scan.get("exchange_results", {})
+                    )
+                    restored_optimal = sum(
+                        1
+                        for record in exchange_results.values()
+                        if record.get("status") == "optimal"
+                        and record.get("maximum") is not None
+                    )
+                    print(
+                        "Product scan partial checkpoint restored: "
+                        f"{restored_optimal}/{len(scan_candidates)} "
+                        "optimal exchanges already complete; "
+                        f"{len(scan_candidates) - restored_optimal} "
+                        "remaining.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "Existing product_scan_partial.yaml does not "
+                        "match the current scan configuration/candidate "
+                        "set and will be replaced.",
+                        flush=True,
+                    )
+
+            def persist_scan_result(
+                reaction_id: str,
+                record: dict,
+            ) -> None:
+                exchange_results[reaction_id] = record
+
+                completed_optimal = sum(
+                    1
+                    for value in exchange_results.values()
+                    if value.get("status") == "optimal"
+                    and value.get("maximum") is not None
+                )
+                attempted = len(exchange_results)
+                solve_seconds = sum(
+                    float(value.get("solve_seconds", 0.0))
+                    for value in exchange_results.values()
+                )
+
+                yaml_dump_atomic(
+                    {
+                        "status": "partial",
+                        "configuration": scan_configuration,
+                        "candidate_exchange_reactions": list(
+                            scan_candidates
+                        ),
+                        "number_total_exchange_reactions": len(
+                            all_exchange_reactions
+                        ),
+                        "number_prefilter_candidates": len(
+                            scan_candidates
+                        ),
+                        "number_prefilter_excluded": len(
+                            prefilter_excluded
+                        ),
+                        "number_attempted": attempted,
+                        "number_completed_optimal": completed_optimal,
+                        "number_remaining_optimal": (
+                            len(scan_candidates) - completed_optimal
+                        ),
+                        "cumulative_completed_solve_seconds": (
+                            solve_seconds
+                        ),
+                        "exchange_results": exchange_results,
+                    },
+                    scan_progress_path,
+                )
+
             t = perf_counter()
             unfiltered = find_producible_exchanges(
                 community,
                 tolerance=args.production_tolerance,
                 exchange_reactions=scan_candidates,
+                completed_results=exchange_results,
+                progress_callback=persist_scan_result,
             )
-            scan_seconds = perf_counter() - t
+            current_scan_wall_seconds = perf_counter() - t
+
+            scan_seconds = sum(
+                float(value.get("solve_seconds", 0.0))
+                for value in exchange_results.values()
+            )
 
             filtered, filter_audit = filter_product_candidates(
                 community=community,
@@ -207,44 +323,58 @@ def main():
                 keep_oxygen=args.keep_oxygen,
             )
 
+            final_scan_payload = {
+                "status": "complete",
+                "configuration": scan_configuration,
+                "candidate_exchange_reactions": list(
+                    scan_candidates
+                ),
+                "number_total_exchange_reactions": len(
+                    all_exchange_reactions
+                ),
+                "number_prefilter_candidates": len(scan_candidates),
+                "number_prefilter_excluded": len(prefilter_excluded),
+                "number_attempted": len(exchange_results),
+                "number_completed_optimal": sum(
+                    1
+                    for value in exchange_results.values()
+                    if value.get("status") == "optimal"
+                    and value.get("maximum") is not None
+                ),
+                "prefilter_audit": prefilter_audit,
+                "exchange_results": exchange_results,
+                "unfiltered_max_secretion": {
+                    rid: float(value)
+                    for rid, value in unfiltered.items()
+                },
+                "filtered_max_secretion": {
+                    rid: float(value)
+                    for rid, value in filtered.items()
+                },
+                "filter_audit": filter_audit,
+                "scan_seconds": float(scan_seconds),
+                "current_run_scan_wall_seconds": float(
+                    current_scan_wall_seconds
+                ),
+            }
+
+            yaml_dump_atomic(
+                final_scan_payload,
+                scan_checkpoint_path,
+            )
             yaml_dump_atomic(
                 {
+                    **final_scan_payload,
                     "status": "complete",
-                    "configuration": {
-                        "minimal_growth": float(args.minimal_growth),
-                        "production_tolerance": float(
-                            args.production_tolerance
-                        ),
-                        "keep_oxygen": bool(args.keep_oxygen),
-                        "prefilter_before_optimization": True,
-                        "medium_file": str(
-                            args.medium_file.expanduser().resolve()
-                        ),
-                    },
-                    "number_total_exchange_reactions": len(
-                        all_exchange_reactions
-                    ),
-                    "number_prefilter_candidates": len(scan_candidates),
-                    "number_prefilter_excluded": len(prefilter_excluded),
-                    "prefilter_audit": prefilter_audit,
-                    "unfiltered_max_secretion": {
-                        rid: float(value)
-                        for rid, value in unfiltered.items()
-                    },
-                    "filtered_max_secretion": {
-                        rid: float(value)
-                        for rid, value in filtered.items()
-                    },
-                    "filter_audit": filter_audit,
-                    "scan_seconds": float(scan_seconds),
                 },
-                scan_checkpoint_path,
+                scan_progress_path,
             )
 
             print(
                 f"Product scan complete: {len(unfiltered)} producible -> "
-                f"{len(filtered)} filtered candidates in "
-                f"{scan_seconds:.3f}s; checkpoint written.",
+                f"{len(filtered)} filtered candidates; "
+                f"cumulative completed-solve time="
+                f"{scan_seconds:.3f}s; final checkpoint written.",
                 flush=True,
             )
 
