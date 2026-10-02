@@ -105,14 +105,31 @@ def find_producible_exchanges(
     community: LayeredCommunity,
     tolerance: float = 1e-6,
     max_exchanges: int | None = None,
+    exchange_reactions: list[str] | None = None,
 ) -> dict:
-    """Compute maximum secretion of global community exchanges.
+    """Compute maximum secretion of selected global community exchanges.
+
+    When exchange_reactions is None, every global exchange is considered.
+    Callers can pass a biologically prefiltered exchange list to avoid
+    expensive optimizations for water, protons, H2, metals, and other
+    out-of-scope products.
 
     max_exchanges is intended for deterministic benchmarks and tests.
-    None scans every exchange; a positive integer scans only the first
-    N exchange IDs after sorting.
+    None scans every selected exchange; a positive integer scans only the
+    first N exchange IDs after sorting.
     """
-    exchanges = sorted(get_community_exchanges(community))
+    if exchange_reactions is None:
+        exchanges = sorted(get_community_exchanges(community))
+    else:
+        available = set(get_community_exchanges(community))
+        requested = set(exchange_reactions)
+        unknown = sorted(requested - available)
+        if unknown:
+            raise ValueError(
+                "Requested product-scan exchanges are not global community "
+                "exchanges: " + ", ".join(unknown[:20])
+            )
+        exchanges = sorted(requested)
 
     if max_exchanges is not None:
         if max_exchanges < 1:
