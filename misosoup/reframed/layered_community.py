@@ -25,7 +25,7 @@ BOUND_INF = 1000
 class LayeredCommunity(Community):
     """Community model with additional layer of exchange reactions for each member."""
 
-    default_environment = Env(params={"LogToConsole": 0, "Method": 1})
+    # Created lazily so merge-only workflows (e.g. parallel HiGHS product scan)\n    # do not acquire a Gurobi/WLS session merely by importing this module.\n    default_environment = None
 
     def __init__(
         self,
@@ -42,12 +42,23 @@ class LayeredCommunity(Community):
             copy_models=copy_models,
         )
 
-        if env is None:
-            env = self.default_environment
-
         self.suffix = suffix
-        self.solver = GurobiEnvSolver(model=self.merged_model, env=env, params=params)
         self.has_binary_variables = False
+
+        if create_solver:
+            if env is None:
+                if type(self).default_environment is None:
+                    type(self).default_environment = Env(
+                        params={"LogToConsole": 0, "Method": 1}
+                    )
+                env = type(self).default_environment
+            self.solver = GurobiEnvSolver(
+                model=self.merged_model,
+                env=env,
+                params=params,
+            )
+        else:
+            self.solver = None
 
     def merge_models(self):
         comm_model = CBModel(self.id)
