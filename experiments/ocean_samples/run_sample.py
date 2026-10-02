@@ -20,10 +20,14 @@ from common import (
     yaml_dump_atomic,
     yaml_load,
 )
-from misosoup.library.product_filter import filter_product_candidates
+from misosoup.library.product_filter import (
+    filter_exchange_candidates,
+    filter_product_candidates,
+)
 from misosoup.library.product_reference import (
     constrain_full_community_lp,
     find_producible_exchanges,
+    get_community_exchanges,
 )
 from misosoup.library.minimal_product_communities import (
     findMinimalProductCommunities,
@@ -772,10 +776,38 @@ def main() -> None:
                 "See infeasibility_diagnostic.yaml."
             )
 
+        all_exchange_reactions = sorted(
+            get_community_exchanges(community)
+        )
+        scan_candidates, prefilter_audit = filter_exchange_candidates(
+            community=community,
+            exchange_reactions=all_exchange_reactions,
+            keep_oxygen=args.keep_oxygen,
+        )
+        excluded = {
+            rid: info
+            for rid, info in prefilter_audit.items()
+            if not info["keep"]
+        }
+        missing_formula = {
+            rid: info
+            for rid, info in prefilter_audit.items()
+            if info["reason"] == "missing_formula_kept_for_review"
+        }
+
+        print(
+            "Product prefilter: "
+            f"{len(all_exchange_reactions)} total exchanges -> "
+            f"{len(scan_candidates)} selected for optimization; "
+            f"{len(excluded)} excluded before LP solves.",
+            flush=True,
+        )
+
         t = perf_counter()
         unfiltered = find_producible_exchanges(
             community,
             tolerance=args.production_tolerance,
+            exchange_reactions=scan_candidates,
         )
         scan_time = elapsed(t)
 
@@ -784,20 +816,11 @@ def main() -> None:
             max_secretion=unfiltered,
             keep_oxygen=args.keep_oxygen,
         )
-        excluded = {
-            rid: info
-            for rid, info in filter_audit.items()
-            if not info["keep"]
-        }
-        missing_formula = {
-            rid: info
-            for rid, info in filter_audit.items()
-            if info["reason"] == "missing_formula_kept_for_review"
-        }
 
         print(
-            f"Product scan: {len(unfiltered)} producible -> "
-            f"{len(filtered)} filtered candidates in {scan_time:.3f}s",
+            f"Product scan: {len(scan_candidates)} optimized -> "
+            f"{len(unfiltered)} producible -> "
+            f"{len(filtered)} retained products in {scan_time:.3f}s",
             flush=True,
         )
 
@@ -1024,6 +1047,11 @@ def main() -> None:
             },
             "individual_growth": individual_growth,
             "individual_product_maxima": {
+                "number_total_exchange_reactions": len(
+                    all_exchange_reactions
+                ),
+                "number_prefilter_candidates": len(scan_candidates),
+                "number_prefilter_excluded": len(excluded),
                 "number_unfiltered_producible_exchanges": len(unfiltered),
                 "number_filtered_products": len(filtered),
                 "unfiltered_max_secretion": {
@@ -1032,6 +1060,8 @@ def main() -> None:
                 "filtered_max_secretion": {
                     rid: float(v) for rid, v in filtered.items()
                 },
+                "prefilter_audit": prefilter_audit,
+                "postfilter_audit": filter_audit,
                 "excluded_products": excluded,
                 "missing_formula_products": missing_formula,
             },
