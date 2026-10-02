@@ -2,6 +2,7 @@
 
 import logging
 from time import perf_counter
+from typing import Callable
 
 from reframed.solvers.solution import Status
 
@@ -106,6 +107,8 @@ def find_producible_exchanges(
     tolerance: float = 1e-6,
     max_exchanges: int | None = None,
     exchange_reactions: list[str] | None = None,
+    completed_results: dict[str, dict] | None = None,
+    progress_callback: Callable[[str, dict], None] | None = None,
 ) -> dict:
     """Compute maximum secretion of selected global community exchanges.
 
@@ -117,6 +120,12 @@ def find_producible_exchanges(
     max_exchanges is intended for deterministic benchmarks and tests.
     None scans every selected exchange; a positive integer scans only the
     first N exchange IDs after sorting.
+
+    completed_results can contain prior per-exchange checkpoints. Only records
+    with status == "optimal" and a finite maximum are reused. progress_callback
+    is invoked immediately after every attempted optimization so callers can
+    persist an atomic checkpoint. An exchange interrupted mid-solve is therefore
+    absent from the checkpoint and will be retried on the next run.
     """
     if exchange_reactions is None:
         exchanges = sorted(get_community_exchanges(community))
@@ -135,7 +144,41 @@ def find_producible_exchanges(
         if max_exchanges < 1:
             raise ValueError("max_exchanges must be >= 1 or None.")
         exchanges = exchanges[:max_exchanges]
+
+    completed_results = dict(completed_results or {})
+    selected_exchange_set = set(exchanges)
+    unknown_completed = sorted(
+        set(completed_results) - selected_exchange_set
+    )
+    if unknown_completed:
+        raise ValueError(
+            "Checkpoint contains exchanges outside the selected product scan: "
+            + ", ".join(unknown_completed[:20])
+        )
+
     producible = {}
+    reusable_results = {}
+
+    for rid, record in completed_results.items():
+        if record.get("status") != "optimal":
+            continue
+
+        maximum = record.get("maximum")
+        if maximum is None:
+            continue
+
+        try:
+            maximum = float(maximum)
+        except (TypeError, ValueError):
+            continue
+
+        reusable_results[rid] = {
+            **record,
+            "maximum": maximum,
+        }
+
+        if maximum > tolerance:
+            producible[rid] = maximum
 
     gurobi_model = community.solver.problem
     gurobi_model.update()
@@ -174,7 +217,30 @@ def find_producible_exchanges(
         total_exchanges,
     )
 
+    if reusable_results:
+        print(
+            "Product scan resume: "
+            f"{len(reusable_results)}/{total_exchanges} exchange "
+            "optimizations restored from checkpoint; "
+            f"{total_exchanges - len(reusable_results)} remaining.",
+            flush=True,
+        )
+
     for index, rid in enumerate(exchanges, start=1):
+        if rid in reusable_results:
+            maximum = reusable_results[rid]["maximum"]
+            print(
+                f"Optimization {index}/{total_exchanges} reused: "
+                f"{rid} max={maximum:.8g}",
+                flush=True,
+            )
+            continue
+
+        print(
+            f"Starting optimization {index}/{total_exchanges}: {rid}",
+            flush=True,
+        )
+
         solve_start = perf_counter()
         solution = community.solver.solve(
             objective={rid: 1},
@@ -191,6 +257,16 @@ def find_producible_exchanges(
                 rid,
                 solution.status,
             )
+            record = {
+                "status": "nonoptimal",
+                "solver_status": str(solution.status),
+                "maximum": None,
+                "solve_seconds": float(solve_time),
+                "elapsed_seconds_current_run": float(elapsed_time),
+            }
+            if progress_callback is not None:
+                progress_callback(rid, record)
+
             print(
                 f"Optimization {index}/{total_exchanges} finished: "
                 f"{rid} status={solution.status} "
@@ -199,10 +275,21 @@ def find_producible_exchanges(
             )
             continue
 
-        maximum = solution.values.get(rid, 0.0)
+        maximum = float(solution.values.get(rid, 0.0))
 
         if maximum > tolerance:
             producible[rid] = maximum
+
+        record = {
+            "status": "optimal",
+            "solver_status": str(solution.status),
+            "maximum": maximum,
+            "producible": bool(maximum > tolerance),
+            "solve_seconds": float(solve_time),
+            "elapsed_seconds_current_run": float(elapsed_time),
+        }
+        if progress_callback is not None:
+            progress_callback(rid, record)
 
         print(
             f"Optimization {index}/{total_exchanges} finished: "
