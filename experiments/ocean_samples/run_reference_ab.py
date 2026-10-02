@@ -9,7 +9,7 @@ from time import perf_counter
 
 from reframed.solvers.solution import Status
 
-from common import yaml_dump_atomic
+from common import yaml_dump_atomic, yaml_load
 from misosoup.library.product_filter import filter_product_candidates
 from misosoup.library.product_reference import (
     constrain_full_community_lp,
@@ -118,23 +118,93 @@ def main():
                 f"Full reference community is not feasible: {feasibility.status}"
             )
 
-        t = perf_counter()
-        unfiltered = find_producible_exchanges(
-            community,
-            tolerance=args.production_tolerance,
-        )
-        scan_seconds = perf_counter() - t
+        scan_checkpoint_path = stage_dir / "product_scan.yaml"
 
-        filtered, filter_audit = filter_product_candidates(
-            community=community,
-            max_secretion=unfiltered,
-            keep_oxygen=args.keep_oxygen,
-        )
-        print(
-            f"Product scan complete: {len(unfiltered)} producible -> "
-            f"{len(filtered)} filtered candidates in {scan_seconds:.3f}s.",
-            flush=True,
-        )
+        if scan_checkpoint_path.exists():
+            cached_scan = yaml_load(scan_checkpoint_path)
+            cached_config = cached_scan.get("configuration", {})
+            cache_matches = (
+                cached_scan.get("status") == "complete"
+                and float(cached_config.get("minimal_growth", -1))
+                == float(args.minimal_growth)
+                and float(cached_config.get("production_tolerance", -1))
+                == float(args.production_tolerance)
+                and bool(cached_config.get("keep_oxygen", False))
+                == bool(args.keep_oxygen)
+                and str(cached_config.get("medium_file", ""))
+                == str(args.medium_file.expanduser().resolve())
+            )
+        else:
+            cache_matches = False
+
+        if cache_matches:
+            unfiltered = {
+                rid: float(value)
+                for rid, value in cached_scan[
+                    "unfiltered_max_secretion"
+                ].items()
+            }
+            filtered = {
+                rid: float(value)
+                for rid, value in cached_scan[
+                    "filtered_max_secretion"
+                ].items()
+            }
+            filter_audit = cached_scan["filter_audit"]
+            scan_seconds = 0.0
+            print(
+                f"Product scan checkpoint reused: "
+                f"{len(unfiltered)} producible -> "
+                f"{len(filtered)} filtered candidates.",
+                flush=True,
+            )
+        else:
+            t = perf_counter()
+            unfiltered = find_producible_exchanges(
+                community,
+                tolerance=args.production_tolerance,
+            )
+            scan_seconds = perf_counter() - t
+
+            filtered, filter_audit = filter_product_candidates(
+                community=community,
+                max_secretion=unfiltered,
+                keep_oxygen=args.keep_oxygen,
+            )
+
+            yaml_dump_atomic(
+                {
+                    "status": "complete",
+                    "configuration": {
+                        "minimal_growth": float(args.minimal_growth),
+                        "production_tolerance": float(
+                            args.production_tolerance
+                        ),
+                        "keep_oxygen": bool(args.keep_oxygen),
+                        "medium_file": str(
+                            args.medium_file.expanduser().resolve()
+                        ),
+                    },
+                    "unfiltered_max_secretion": {
+                        rid: float(value)
+                        for rid, value in unfiltered.items()
+                    },
+                    "filtered_max_secretion": {
+                        rid: float(value)
+                        for rid, value in filtered.items()
+                    },
+                    "filter_audit": filter_audit,
+                    "scan_seconds": float(scan_seconds),
+                },
+                scan_checkpoint_path,
+            )
+
+            print(
+                f"Product scan complete: {len(unfiltered)} producible -> "
+                f"{len(filtered)} filtered candidates in "
+                f"{scan_seconds:.3f}s; checkpoint written.",
+                flush=True,
+            )
 
         t = perf_counter()
         stage_a = getMaxProduct(
