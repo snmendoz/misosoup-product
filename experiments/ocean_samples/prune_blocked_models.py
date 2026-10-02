@@ -163,6 +163,10 @@ def _cache_valid(
         == float(tolerance)
         and float(audit.get("open_exchange_bound", -1.0))
         == float(open_bound)
+        and float(audit.get("biomass_lower_bound_fva", -1.0))
+        == 0.0
+        and float(audit.get("biomass_upper_bound_fva", -1.0))
+        == float(open_bound)
         and audit.get("output_model") == str(output_model)
     )
 
