@@ -10,10 +10,14 @@ from time import perf_counter
 from reframed.solvers.solution import Status
 
 from common import yaml_dump_atomic, yaml_load
-from misosoup.library.product_filter import filter_product_candidates
+from misosoup.library.product_filter import (
+    filter_exchange_candidates,
+    filter_product_candidates,
+)
 from misosoup.library.product_reference import (
     constrain_full_community_lp,
     find_producible_exchanges,
+    get_community_exchanges,
 )
 from misosoup.library.product_selection import (
     getMaxProduct,
@@ -118,6 +122,28 @@ def main():
                 f"Full reference community is not feasible: {feasibility.status}"
             )
 
+        all_exchange_reactions = sorted(
+            get_community_exchanges(community)
+        )
+        scan_candidates, prefilter_audit = filter_exchange_candidates(
+            community=community,
+            exchange_reactions=all_exchange_reactions,
+            keep_oxygen=args.keep_oxygen,
+        )
+        prefilter_excluded = {
+            rid: info
+            for rid, info in prefilter_audit.items()
+            if not info["keep"]
+        }
+
+        print(
+            "Product prefilter: "
+            f"{len(all_exchange_reactions)} total exchanges -> "
+            f"{len(scan_candidates)} selected for optimization; "
+            f"{len(prefilter_excluded)} excluded before LP solves.",
+            flush=True,
+        )
+
         scan_checkpoint_path = stage_dir / "product_scan.yaml"
 
         if scan_checkpoint_path.exists():
@@ -131,6 +157,8 @@ def main():
                 == float(args.production_tolerance)
                 and bool(cached_config.get("keep_oxygen", False))
                 == bool(args.keep_oxygen)
+                and bool(cached_config.get("prefilter_before_optimization", False))
+                is True
                 and str(cached_config.get("medium_file", ""))
                 == str(args.medium_file.expanduser().resolve())
             )
@@ -151,6 +179,7 @@ def main():
                 ].items()
             }
             filter_audit = cached_scan["filter_audit"]
+            prefilter_audit = cached_scan["prefilter_audit"]
             scan_seconds = float(cached_scan.get("scan_seconds", 0.0))
             print(
                 f"Product scan checkpoint reused: "
@@ -163,6 +192,7 @@ def main():
             unfiltered = find_producible_exchanges(
                 community,
                 tolerance=args.production_tolerance,
+                exchange_reactions=scan_candidates,
             )
             scan_seconds = perf_counter() - t
 
@@ -181,10 +211,17 @@ def main():
                             args.production_tolerance
                         ),
                         "keep_oxygen": bool(args.keep_oxygen),
+                        "prefilter_before_optimization": True,
                         "medium_file": str(
                             args.medium_file.expanduser().resolve()
                         ),
                     },
+                    "number_total_exchange_reactions": len(
+                        all_exchange_reactions
+                    ),
+                    "number_prefilter_candidates": len(scan_candidates),
+                    "number_prefilter_excluded": len(prefilter_excluded),
+                    "prefilter_audit": prefilter_audit,
                     "unfiltered_max_secretion": {
                         rid: float(value)
                         for rid, value in unfiltered.items()
@@ -266,6 +303,11 @@ def main():
                 **medium_audit,
             },
             "individual_product_maxima": {
+                "number_total_exchange_reactions": len(
+                    all_exchange_reactions
+                ),
+                "number_prefilter_candidates": len(scan_candidates),
+                "number_prefilter_excluded": len(prefilter_excluded),
                 "number_unfiltered_producible_exchanges": len(unfiltered),
                 "number_filtered_products": len(filtered),
                 "unfiltered_max_secretion": {
@@ -274,6 +316,7 @@ def main():
                 "filtered_max_secretion": {
                     rid: float(value) for rid, value in filtered.items()
                 },
+                "prefilter_audit": prefilter_audit,
                 "filter_audit": filter_audit,
             },
             "stage_a": {
