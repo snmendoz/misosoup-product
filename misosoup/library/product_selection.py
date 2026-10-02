@@ -250,6 +250,12 @@ def getMaxProduct(
 
     product_ids = sorted(products)
 
+    print(
+        f"Stage A.0: {len(product_ids)} candidate products; "
+        f"alpha={fraction:.6g}; preparing binary product-selection MILP.",
+        flush=True,
+    )
+
     # Access the Gurobi model underlying the ReFramed solver.
     gurobi_model = community.solver.problem
 
@@ -282,6 +288,12 @@ def getMaxProduct(
 
     community.solver.update()
     gurobi_model.update()
+
+    print(
+        f"Stage A.1: created {len(product_variables)} binary z_i variables; "
+        "adding product-threshold indicator constraints.",
+        flush=True,
+    )
 
     # Native indicator constraints:
     #
@@ -333,6 +345,11 @@ def getMaxProduct(
         len(product_ids),
     )
 
+    print(
+        f"Stage A.2: solving max sum(z_i) for {len(product_ids)} products...",
+        flush=True,
+    )
+
     solution = community.solver.solve(
         objective=objective,
         get_values=values_to_get,
@@ -363,6 +380,11 @@ def getMaxProduct(
         "Stage A optimum K*: %i / %i",
         k_star,
         len(product_ids),
+    )
+
+    print(
+        f"Stage A COMPLETE: K*={k_star}/{len(product_ids)} simultaneous products.",
+        flush=True,
     )
 
     return {
@@ -437,6 +459,12 @@ def maximizeProducts(
     k_star = stage_a["k_star"]
 
     gurobi_model = community.solver.problem
+
+    print(
+        f"Stage B.0: fixing product cardinality at K*={k_star}; "
+        f"preparing normalized-production optimization for {len(product_ids)} products.",
+        flush=True,
+    )
 
     # Fix only the cardinality:
     #
@@ -559,6 +587,11 @@ def maximizeProducts(
         k_star,
     )
 
+    print(
+        f"Stage B.1: constraints ready; solving max sum(q_i) with K*={k_star}...",
+        flush=True,
+    )
+
     solution = community.solver.solve(
         objective=objective,
         get_values=values_to_get,
@@ -593,6 +626,12 @@ def maximizeProducts(
     logging.info(
         "Stage B Q* reconstructed from q_i: %.12g",
         q_star_from_values,
+    )
+
+    print(
+        f"Stage B.1 COMPLETE: Q*={q_star:.12g}; "
+        f"reconstructed={q_star_from_values:.12g}.",
+        flush=True,
     )
 
     result = dict(stage_a)
@@ -651,6 +690,11 @@ def getSelectedProductsFromProductMaximization(
     solution = stage_b["stage_b_solution"]
     k_star = stage_b["k_star"]
 
+    print(
+        "Stage B.2: extracting and validating the selected product set...",
+        flush=True,
+    )
+
     selected_products = []
     selected_product_info = {}
 
@@ -695,6 +739,12 @@ def getSelectedProductsFromProductMaximization(
     logging.info(
         "Stage B.2: extracted %i selected products.",
         len(selected_products),
+    )
+
+    print(
+        f"Stage B COMPLETE: selected {len(selected_products)} products "
+        f"(expected K*={k_star}).",
+        flush=True,
     )
 
     return {
@@ -794,6 +844,12 @@ def solvepFBAUsingFixProducts(
             "Stage C received duplicated product IDs."
         )
 
+    print(
+        f"Stage C.0: fresh community with {len(community.organisms)} organisms; "
+        f"{len(selected_products)} selected products; preparing pFBA reference problem.",
+        flush=True,
+    )
+
     # Recreate the same organism activity/growth coupling used by A/B.
     community.setup_binary_variables(
         minimal_growth
@@ -821,6 +877,11 @@ def solvepFBAUsingFixProducts(
     )
 
     community.solver.update()
+
+    print(
+        "Stage C.0: full-community activity and medium constraints installed.",
+        flush=True,
+    )
 
     # Fresh q_i variables only for products selected by Stage B.
     normalized_variables = {}
@@ -945,6 +1006,10 @@ def solvepFBAUsingFixProducts(
     # C0: fresh biological model before split variables.
     # --------------------------------------------------------------
     if check_feasibility:
+        print(
+            "Stage C.1: checking feasibility before split-flux variables...",
+            flush=True,
+        )
         logging.info(
             "Stage C0: checking fresh biological model before split variables."
         )
@@ -966,6 +1031,10 @@ def solvepFBAUsingFixProducts(
         logging.info(
             "Stage C0 fresh model is feasible."
         )
+        print(
+            "Stage C.1 COMPLETE: fresh biological model is feasible.",
+            flush=True,
+        )
 
     # --------------------------------------------------------------
     # Add classical split-flux variables.
@@ -980,6 +1049,12 @@ def solvepFBAUsingFixProducts(
     logging.info(
         "Stage C: creating split variables for %i reactions.",
         len(reaction_ids),
+    )
+
+    print(
+        f"Stage C.2: creating 2 split variables for each of "
+        f"{len(reaction_ids)} reactions...",
+        flush=True,
     )
 
     for index, rid in enumerate(reaction_ids):
@@ -1054,7 +1129,19 @@ def solvepFBAUsingFixProducts(
         positive_variables[rid] = positive_name
         negative_variables[rid] = negative_name
 
+        completed = index + 1
+        if completed % 50000 == 0 or completed == len(reaction_ids):
+            print(
+                f"Stage C.2 split variables: {completed}/{len(reaction_ids)} reactions.",
+                flush=True,
+            )
+
     community.solver.update()
+
+    print(
+        "Stage C.3: adding split-flux equality constraints...",
+        flush=True,
+    )
 
     for index, rid in enumerate(reaction_ids):
 
@@ -1069,12 +1156,23 @@ def solvepFBAUsingFixProducts(
             0,
         )
 
+        completed = index + 1
+        if completed % 50000 == 0 or completed == len(reaction_ids):
+            print(
+                f"Stage C.3 split constraints: {completed}/{len(reaction_ids)} reactions.",
+                flush=True,
+            )
+
     community.solver.update()
 
     # --------------------------------------------------------------
     # C1: split representation added, still no pFBA objective.
     # --------------------------------------------------------------
     if check_feasibility:
+        print(
+            "Stage C.4: checking feasibility of the split-flux model...",
+            flush=True,
+        )
         logging.info(
             "Stage C1: checking feasibility after split-flux constraints."
         )
@@ -1096,6 +1194,10 @@ def solvepFBAUsingFixProducts(
         logging.info(
             "Stage C1 fresh split-flux model is feasible."
         )
+        print(
+            "Stage C.4 COMPLETE: split-flux model is feasible.",
+            flush=True,
+        )
 
     # --------------------------------------------------------------
     # C2: actual pFBA objective.
@@ -1113,6 +1215,11 @@ def solvepFBAUsingFixProducts(
 
     logging.info(
         "Stage C2: minimizing total split flux."
+    )
+
+    print(
+        f"Stage C.5: solving pFBA over {len(reaction_ids)} reactions...",
+        flush=True,
     )
 
     solution = community.solver.solve(
@@ -1192,6 +1299,13 @@ def solvepFBAUsingFixProducts(
     logging.info(
         "Stage C2 retained sum(q_i): %.12g",
         stage_c_q_sum,
+    )
+
+    print(
+        f"Stage C COMPLETE: pFBA objective={pfba_objective_value:.12g}; "
+        f"retained sum(q_i)={stage_c_q_sum:.12g}; "
+        f"products={len(selected_products)}.",
+        flush=True,
     )
 
     return {
