@@ -405,13 +405,24 @@ def main() -> None:
 
     tasks = []
     mapping = {}
+    claimed_outputs = {}
 
     for source_text in source_paths:
         source = Path(source_text)
         output_model = output_model_dir / (
             source.stem + "_without_blocked_reactions.xml"
         )
-        mapping[source_text] = str(output_model.resolve())
+        output_key = str(output_model.resolve())
+
+        previous_source = claimed_outputs.get(output_key)
+        if previous_source is not None and previous_source != source_text:
+            raise RuntimeError(
+                "Two source models would produce the same reduced filename: "
+                f"{previous_source} and {source_text} -> {output_key}"
+            )
+
+        claimed_outputs[output_key] = source_text
+        mapping[source_text] = output_key
         tasks.append(
             {
                 "source_path": source_text,
