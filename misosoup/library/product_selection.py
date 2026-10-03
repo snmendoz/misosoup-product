@@ -58,10 +58,8 @@ import re
 from pathlib import Path
 
 from gurobipy import GRB
-from reframed.solvers.solution import Status
-from reframed.solvers.solver import VarType
-
-from ..reframed.layered_community import LayeredCommunity
+from ..cobra.solver import Status, VarType
+from ..cobra.layered_community import LayeredCommunity
 from .product_reference import constrain_full_community_lp
 
 
