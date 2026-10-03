@@ -54,6 +54,7 @@ reference problem from the Stage-A/Stage-B MILP machinery.
 """
 
 import logging
+import math
 import re
 from pathlib import Path
 
@@ -1394,44 +1395,41 @@ def solvepFBAUsingFixProducts(
         positive_name = f"pfba_pos_{index}"
         negative_name = f"pfba_neg_{index}"
 
-        # Reaction-aware finite split bounds.
+        # Use the finite, reaction-aware split bounds from the
+        # Leftraru-validated Stage-C formulation.
         #
-        # Restore the numerically stable formulation validated on Leftraru:
+        # IMPORTANT: these bounds come from the merged-model reaction itself,
+        # not from solver bounds tightened during Stage-C setup.  This matches
+        # the formulation validated in commit 7f7340a / job 13702509.
         #
-        #     v_r = v_r^+ - v_r^-
-        #     0 <= v_r^+ <= max(0, UB_r)
-        #     0 <= v_r^- <= max(0, -LB_r)
+        #     0 <= v_r^+ <= max(0, ub_r)
+        #     0 <= v_r^- <= max(0, -lb_r)
         #
-        # IMPORTANT: use the CURRENT Gurobi bounds, not static SBML/model
-        # bounds, because Stage-C setup may already have tightened reaction
-        # bounds (biomass, organism activity, local exchanges, etc.).
-        #
-        # True infinities are replaced by MiSoSoup's validated practical
-        # finite cap BOUND_INF (=1000) to avoid the numerical instability
-        # previously observed with unbounded split auxiliaries.
-        gurobi_model = community.solver.problem
-        gurobi_model.update()
-        flux_variable = gurobi_model.getVarByName(rid)
+        # Infinite model bounds use MiSoSoup's practical BOUND_INF=1000.
+        reaction = community.merged_model.reactions[rid]
+        lower_bound = float(reaction.lb)
+        upper_bound = float(reaction.ub)
 
-        if flux_variable is None:
-            raise RuntimeError(
-                f"Unable to find Stage-C flux variable {rid}."
+        if math.isinf(lower_bound):
+            effective_lower = (
+                -BOUND_INF
+                if lower_bound < 0
+                else BOUND_INF
             )
+        else:
+            effective_lower = lower_bound
 
-        lower_bound = float(flux_variable.LB)
-        upper_bound = float(flux_variable.UB)
+        if math.isinf(upper_bound):
+            effective_upper = (
+                BOUND_INF
+                if upper_bound > 0
+                else -BOUND_INF
+            )
+        else:
+            effective_upper = upper_bound
 
-        positive_upper = (
-            BOUND_INF
-            if upper_bound >= GRB.INFINITY / 2
-            else max(0.0, upper_bound)
-        )
-
-        negative_upper = (
-            BOUND_INF
-            if lower_bound <= -GRB.INFINITY / 2
-            else max(0.0, -lower_bound)
-        )
+        positive_upper = max(0.0, effective_upper)
+        negative_upper = max(0.0, -effective_lower)
 
         community.solver.add_variable(
             positive_name,
