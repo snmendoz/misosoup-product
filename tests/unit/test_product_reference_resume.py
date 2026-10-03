@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from reframed.solvers.solution import Status
+from misosoup.cobra.solver import Status
 
 from misosoup.library.product_reference import find_producible_exchanges
 
