@@ -9,16 +9,19 @@ PARTITION="${JACCARD_PARTITION:-general}"
 TIME_LIMIT="${JACCARD_TIME_LIMIT:-03:00:00}"
 MEMORY="${JACCARD_MEMORY:-16G}"
 
+source "$HOME/anaconda3/etc/profile.d/conda.sh"
+conda activate misosoup
+
 STAMP="$(date +%Y%m%d_%H%M%S)"
 RUN_ROOT="${JACCARD_OUTPUT_ROOT:-$HOME/misosoup_runs/tara_jaccard_${STAMP}}"
 mkdir -p "$RUN_ROOT/logs"
 
 echo "Validating the three 1,375-model sets before submission..."
-python -u "$REPO_ROOT/experiments/ocean_samples/jaccard_models.py"   --data-root "$DATA_ROOT"   --output-root "$RUN_ROOT"   --expected-models 1375   --validate-only
+python -u "$REPO_ROOT/experiments/ocean_samples/jaccard_models.py" --data-root "$DATA_ROOT" --output-root "$RUN_ROOT" --expected-models 1375 --validate-only
 
 JOB_ID="$(
   cd "$RUN_ROOT/logs"
-  sbatch --parsable     --partition="$PARTITION"     --time="$TIME_LIMIT"     --mem="$MEMORY"     --export=ALL,JACCARD_DATA_ROOT="$DATA_ROOT",JACCARD_OUTPUT_ROOT="$RUN_ROOT"     "$REPO_ROOT/experiments/ocean_samples/jaccard_models.slurm"
+  sbatch --parsable --partition="$PARTITION" --time="$TIME_LIMIT" --mem="$MEMORY" --export=ALL,JACCARD_DATA_ROOT="$DATA_ROOT",JACCARD_OUTPUT_ROOT="$RUN_ROOT" "$REPO_ROOT/experiments/ocean_samples/jaccard_models.slurm"
 )"
 
 cat <<EOF
