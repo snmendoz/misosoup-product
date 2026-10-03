@@ -49,7 +49,9 @@ Until that file is added to the TARA Chile repository, the workflow falls back
 automatically to the temporary medium bundled in MiSoSoup:
 
 ```text
-experiments/ocean_samples/media/complex_media_gapseq2.csv
+experiments/ocean_samples/media/ocean_complete_media.csv
+
+This is a repository copy of `Models/gapseq/media/ocean_complete_media.csv` from `mathomics/tara_chile_metabolic_models` and is the required medium for the 1,375 Tara Chile MAG workflows. The separate three-species MiSoSoup integration example continues to use `examples/marine/media.yaml`.
 ```
 
 The temporary CSV contains 125 compounds with columns `compound`, `name`, and
