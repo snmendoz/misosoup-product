@@ -61,7 +61,7 @@ DATA_REPO="${DATA_REPO/#\~/$HOME}"
 
 MODELS_DIR="${OCEAN_MODELS_DIR:-$DATA_REPO/Models/gapseq/models}"
 TARA_MEDIUM="$DATA_REPO/Models/gapseq/media/mathomics.txt"
-BUNDLED_MEDIUM="$REPO_ROOT/experiments/ocean_samples/media/complex_media_gapseq2.csv"
+BUNDLED_MEDIUM="$REPO_ROOT/experiments/ocean_samples/media/ocean_complete_media.csv"
 DEFAULT_MATRIX="$DATA_REPO/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv"
 MATRIX_INPUT="${1:-${OCEAN_ABUNDANCE_MATRIX:-$DEFAULT_MATRIX}}"
 
