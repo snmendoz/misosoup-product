@@ -1124,6 +1124,21 @@ def solvepFBAUsingFixProducts(
         logging.info(
             "Stage C0 fresh model is feasible."
         )
+
+        gurobi_model_c0 = community.solver.problem
+        c0_all_values = {
+            variable.VarName: float(variable.X)
+            for variable in gurobi_model_c0.getVars()
+        }
+
+        print(
+            "Stage C0 Gurobi quality: "
+            f"MaxVio={float(gurobi_model_c0.MaxVio):.12g}; "
+            f"BoundVio={float(gurobi_model_c0.BoundVio):.12g}; "
+            f"ConstrVio={float(gurobi_model_c0.ConstrVio):.12g}",
+            flush=True,
+        )
+
         print(
             "Stage C.1 COMPLETE: fresh biological model is feasible.",
             flush=True,
@@ -1354,6 +1369,125 @@ def solvepFBAUsingFixProducts(
             )
 
     community.solver.update()
+
+    # --------------------------------------------------------------
+    # Algebraic feasibility check using the exact C0 solution.
+    #
+    # Extend the C0 solution with:
+    #     v+ = max(v, 0)
+    #     v- = max(-v, 0)
+    # and evaluate every bound and linear constraint without asking Gurobi
+    # to re-optimize.  Since this representation is mathematically
+    # equivalent, any violation here should be no worse than the original
+    # C0 numerical residuals.
+    # --------------------------------------------------------------
+    if check_feasibility:
+        candidate_values = dict(c0_all_values)
+
+        for rid in reaction_ids:
+            flux = float(c0_all_values[rid])
+            candidate_values[positive_variables[rid]] = max(flux, 0.0)
+            candidate_values[negative_variables[rid]] = max(-flux, 0.0)
+
+        candidate_violations = []
+
+        for variable in community.solver.problem.getVars():
+            value = candidate_values.get(variable.VarName, 0.0)
+
+            if value < variable.LB:
+                candidate_violations.append(
+                    (
+                        float(variable.LB - value),
+                        f"LB {variable.VarName}",
+                    )
+                )
+
+            if value > variable.UB:
+                candidate_violations.append(
+                    (
+                        float(value - variable.UB),
+                        f"UB {variable.VarName}",
+                    )
+                )
+
+        for constraint in community.solver.problem.getConstrs():
+            row = community.solver.problem.getRow(constraint)
+            lhs = 0.0
+
+            for term_index in range(row.size()):
+                variable = row.getVar(term_index)
+                coefficient = float(row.getCoeff(term_index))
+                lhs += coefficient * candidate_values.get(
+                    variable.VarName,
+                    0.0,
+                )
+
+            rhs = float(constraint.RHS)
+
+            if constraint.Sense == "=":
+                violation = abs(lhs - rhs)
+            elif constraint.Sense == "<":
+                violation = max(0.0, lhs - rhs)
+            elif constraint.Sense == ">":
+                violation = max(0.0, rhs - lhs)
+            else:
+                violation = float("nan")
+
+            if violation > 0:
+                candidate_violations.append(
+                    (
+                        float(violation),
+                        f"CONSTR {constraint.ConstrName}",
+                    )
+                )
+
+        candidate_violations.sort(
+            key=lambda item: item[0],
+            reverse=True,
+        )
+
+        candidate_max_violation = (
+            candidate_violations[0][0]
+            if candidate_violations
+            else 0.0
+        )
+
+        print()
+        print("=" * 70)
+        print("C0-EXTENDED SPLIT-FLUX FEASIBILITY CHECK")
+        print("=" * 70)
+        print(
+            "Constructed algebraically from the feasible C0 solution:",
+            flush=True,
+        )
+        print(
+            "  v+ = max(v, 0), v- = max(-v, 0)",
+            flush=True,
+        )
+        print(
+            f"Maximum candidate violation = "
+            f"{candidate_max_violation:.12g}",
+            flush=True,
+        )
+        print(
+            f"Configured FeasibilityTol = "
+            f"{float(community.solver.problem.Params.FeasibilityTol):.12g}",
+            flush=True,
+        )
+
+        print()
+        print("Largest candidate violations:")
+        if candidate_violations:
+            for magnitude, name in candidate_violations[:20]:
+                print(
+                    f"  {name:70s} {magnitude:.12g}",
+                    flush=True,
+                )
+        else:
+            print("  None.", flush=True)
+
+        print("=" * 70)
+        print()
 
     # --------------------------------------------------------------
     # C1: split representation added, still no pFBA objective.
