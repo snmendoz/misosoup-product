@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from time import perf_counter
 
-from reframed.solvers.solution import Status
+from misosoup.cobra.solver import Status
 
 from common import (
     read_medium_spec,
@@ -15,7 +15,7 @@ from common import (
     yaml_load,
 )
 from misosoup.library.readwrite import load_models
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 from staged_common import solver_params
 
 
