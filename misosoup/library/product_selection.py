@@ -59,7 +59,7 @@ from pathlib import Path
 
 from gurobipy import GRB
 from ..cobra.solver import Status, VarType
-from ..cobra.layered_community import LayeredCommunity
+from ..cobra.layered_community import LayeredCommunity, BOUND_INF
 from .product_reference import constrain_full_community_lp
 
 
@@ -1394,18 +1394,44 @@ def solvepFBAUsingFixProducts(
         positive_name = f"pfba_pos_{index}"
         negative_name = f"pfba_neg_{index}"
 
-        # Canonical split-flux representation:
+        # Reaction-aware finite split bounds.
+        #
+        # Restore the numerically stable formulation validated on Leftraru:
         #
         #     v_r = v_r^+ - v_r^-
-        #     v_r^+, v_r^- >= 0
+        #     0 <= v_r^+ <= max(0, UB_r)
+        #     0 <= v_r^- <= max(0, -LB_r)
         #
-        # The original flux variable v_r already carries all biological
-        # bounds and constraints.  The auxiliary split variables therefore
-        # do not need reaction-derived upper bounds.  Leaving them unbounded
-        # above preserves feasibility exactly; the pFBA objective minimizes
-        # their sum and yields v_r^+ + v_r^- = |v_r| at optimum.
-        positive_upper = GRB.INFINITY
-        negative_upper = GRB.INFINITY
+        # IMPORTANT: use the CURRENT Gurobi bounds, not static SBML/model
+        # bounds, because Stage-C setup may already have tightened reaction
+        # bounds (biomass, organism activity, local exchanges, etc.).
+        #
+        # True infinities are replaced by MiSoSoup's validated practical
+        # finite cap BOUND_INF (=1000) to avoid the numerical instability
+        # previously observed with unbounded split auxiliaries.
+        gurobi_model = community.solver.problem
+        gurobi_model.update()
+        flux_variable = gurobi_model.getVarByName(rid)
+
+        if flux_variable is None:
+            raise RuntimeError(
+                f"Unable to find Stage-C flux variable {rid}."
+            )
+
+        lower_bound = float(flux_variable.LB)
+        upper_bound = float(flux_variable.UB)
+
+        positive_upper = (
+            BOUND_INF
+            if upper_bound >= GRB.INFINITY / 2
+            else max(0.0, upper_bound)
+        )
+
+        negative_upper = (
+            BOUND_INF
+            if lower_bound <= -GRB.INFINITY / 2
+            else max(0.0, -lower_bound)
+        )
 
         community.solver.add_variable(
             positive_name,
