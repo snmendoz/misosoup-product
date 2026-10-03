@@ -54,7 +54,6 @@ reference problem from the Stage-A/Stage-B MILP machinery.
 """
 
 import logging
-import math
 import re
 from pathlib import Path
 
@@ -62,7 +61,7 @@ from gurobipy import GRB
 from reframed.solvers.solution import Status
 from reframed.solvers.solver import VarType
 
-from ..reframed.layered_community import LayeredCommunity, BOUND_INF
+from ..reframed.layered_community import LayeredCommunity
 from .product_reference import constrain_full_community_lp
 
 
@@ -1049,42 +1048,18 @@ def solvepFBAUsingFixProducts(
         positive_name = f"pfba_pos_{index}"
         negative_name = f"pfba_neg_{index}"
 
-        # The split representation must use the CURRENT solver bounds,
-        # not the static CBModel bounds.  Earlier Stage-C setup can tighten or
-        # relax solver bounds directly (for example biomass and local exchange
-        # reactions), so using the stale model bounds can make an otherwise
-        # feasible problem infeasible.
-        gurobi_model = community.solver.problem
-        gurobi_model.update()
-        flux_variable = gurobi_model.getVarByName(rid)
-
-        if flux_variable is None:
-            raise RuntimeError(
-                f"Unable to find Stage-C flux variable {rid}."
-            )
-
-        lower_bound = float(flux_variable.LB)
-        upper_bound = float(flux_variable.UB)
-
-        # Exact split-variable bounds:
+        # Canonical split-flux representation:
         #
-        #   v = v+ - v-
-        #   0 <= v+ <= max(0, ub)
-        #   0 <= v- <= max(0, -lb)
+        #     v_r = v_r^+ - v_r^-
+        #     v_r^+, v_r^- >= 0
         #
-        # Preserve true infinity instead of imposing an artificial 1000 cap;
-        # the pFBA minimization itself prevents gratuitous split flux.
-        positive_upper = (
-            GRB.INFINITY
-            if math.isinf(upper_bound) and upper_bound > 0
-            else max(0.0, upper_bound)
-        )
-
-        negative_upper = (
-            GRB.INFINITY
-            if math.isinf(lower_bound) and lower_bound < 0
-            else max(0.0, -lower_bound)
-        )
+        # The original flux variable v_r already carries all biological
+        # bounds and constraints.  The auxiliary split variables therefore
+        # do not need reaction-derived upper bounds.  Leaving them unbounded
+        # above preserves feasibility exactly; the pFBA objective minimizes
+        # their sum and yields v_r^+ + v_r^- = |v_r| at optimum.
+        positive_upper = GRB.INFINITY
+        negative_upper = GRB.INFINITY
 
         community.solver.add_variable(
             positive_name,
