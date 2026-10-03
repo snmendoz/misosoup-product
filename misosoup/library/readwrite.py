@@ -3,13 +3,15 @@ import yaml
 
 import pandas as pd
 
-from reframed.io.sbml import load_cbmodel
+from cobra.io import read_sbml_model
+
+from ..cobra.adapters import CobraModelAdapter
 
 from .common import get_reaction_name
 
 
 def load_models(paths):
-    return [load_cbmodel(path, flavor="fbc2") for path in paths]
+    return [CobraModelAdapter(read_sbml_model(str(path))) for path in paths]
 
 
 def read_medium(path, medium_name):
