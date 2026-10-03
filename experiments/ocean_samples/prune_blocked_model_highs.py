@@ -24,7 +24,7 @@ import numpy as np
 import scipy
 from scipy.optimize import linprog
 from scipy.sparse import coo_matrix
-from reframed import ReactionType, save_cbmodel
+from cobra.io import write_sbml_model
 
 from common import yaml_dump_atomic, yaml_load
 from misosoup.library.readwrite import load_models
@@ -57,10 +57,7 @@ def environmental_exchange_ids(model) -> list[str]:
         if rid == biomass:
             continue
 
-        if (
-            reaction.reaction_type == ReactionType.EXCHANGE
-            or rid.startswith("R_EX")
-        ):
+        if reaction.is_exchange or rid.startswith("R_EX"):
             ids.append(rid)
 
     return sorted(set(ids))
@@ -426,10 +423,9 @@ def main() -> None:
     temporary = output_model.with_name(
         output_model.stem + ".tmp.xml"
     )
-    save_cbmodel(
-        model,
+    write_sbml_model(
+        model.cobra_model,
         str(temporary),
-        flavor="fbc2",
     )
     os.replace(temporary, output_model)
 
