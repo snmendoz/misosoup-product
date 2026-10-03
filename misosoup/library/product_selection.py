@@ -1025,6 +1025,29 @@ def solvepFBAUsingFixProducts(
             flush=True,
         )
 
+        # Diagnostic repeat with no model changes. If this second solve fails,
+        # the solver is mutating state simply by solving C0.
+        print(
+            "Stage C.1b: repeating the identical C0 feasibility solve...",
+            flush=True,
+        )
+        c0_repeat_solution = community.solver.solve(
+            objective={},
+            get_values=product_and_q_values,
+            minimize=True,
+        )
+        print(
+            f"Stage C.1b status: {c0_repeat_solution.status}.",
+            flush=True,
+        )
+        if c0_repeat_solution.status != Status.OPTIMAL:
+            _raise_with_iis(
+                community=community,
+                stage_name="Stage C0 repeat without model changes",
+                filename="stage_c0_repeat_iis.ilp",
+                status=c0_repeat_solution.status,
+            )
+
     # --------------------------------------------------------------
     # Add absolute-value epigraph variables.
     #
@@ -1077,10 +1100,35 @@ def solvepFBAUsingFixProducts(
 
     community.solver.update()
 
+    # Diagnostic checkpoint: variables only, no epigraph constraints yet.
+    if check_feasibility:
+        print(
+            "Stage C.2b: checking feasibility after adding auxiliary variables only...",
+            flush=True,
+        )
+        variables_only_solution = community.solver.solve(
+            objective={},
+            get_values=product_and_q_values,
+            minimize=True,
+        )
+        print(
+            f"Stage C.2b status: {variables_only_solution.status}.",
+            flush=True,
+        )
+        if variables_only_solution.status != Status.OPTIMAL:
+            _raise_with_iis(
+                community=community,
+                stage_name="Stage C variables-only checkpoint",
+                filename="stage_c_variables_only_iis.ilp",
+                status=variables_only_solution.status,
+            )
+
     print(
-        "Stage C.3: adding absolute-value epigraph constraints...",
+        "Stage C.3: adding absolute-value epigraph constraints in diagnostic batches...",
         flush=True,
     )
+
+    diagnostic_batch_size = 250
 
     for index, rid in enumerate(reaction_ids):
 
@@ -1109,12 +1157,49 @@ def solvepFBAUsingFixProducts(
         )
 
         completed = index + 1
-        if completed % 50000 == 0 or completed == len(reaction_ids):
+        batch_boundary = (
+            completed % diagnostic_batch_size == 0
+            or completed == len(reaction_ids)
+        )
+
+        if batch_boundary:
+            community.solver.update()
             print(
-                f"Stage C.3 absolute constraints: "
-                f"{completed}/{len(reaction_ids)} reactions.",
+                f"Stage C.3 diagnostic batch: constraints added through "
+                f"reaction {completed}/{len(reaction_ids)} "
+                f"({rid}). Checking feasibility...",
                 flush=True,
             )
+
+            if check_feasibility:
+                batch_solution = community.solver.solve(
+                    objective={},
+                    get_values=False,
+                    minimize=True,
+                )
+                print(
+                    f"Stage C.3 batch {completed} status: "
+                    f"{batch_solution.status}.",
+                    flush=True,
+                )
+
+                if batch_solution.status != Status.OPTIMAL:
+                    print(
+                        f"First failing diagnostic batch ends at index "
+                        f"{completed - 1}, reaction {rid}.",
+                        flush=True,
+                    )
+                    _raise_with_iis(
+                        community=community,
+                        stage_name=(
+                            "Stage C absolute-flux diagnostic batch "
+                            f"ending at reaction {completed}/{len(reaction_ids)}"
+                        ),
+                        filename=(
+                            f"stage_c_abs_batch_{completed}_iis.ilp"
+                        ),
+                        status=batch_solution.status,
+                    )
 
     community.solver.update()
 
