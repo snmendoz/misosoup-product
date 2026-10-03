@@ -59,9 +59,15 @@ class LayeredCommunity:
         if create_solver:
             if env is None:
                 if type(self).default_environment is None:
-                    type(self).default_environment = Env(
-                        params={"LogToConsole": 0, "Method": 1}
-                    )
+                    # Configure the environment before it starts so Gurobi
+                    # does not emit license/banner text to stdout. MiSoSoup's
+                    # CLI reserves stdout for machine-readable YAML.
+                    quiet_env = Env(empty=True)
+                    quiet_env.setParam("OutputFlag", 0)
+                    quiet_env.setParam("LogToConsole", 0)
+                    quiet_env.setParam("Method", 1)
+                    quiet_env.start()
+                    type(self).default_environment = quiet_env
                 env = type(self).default_environment
             self.solver = GurobiCobraSolver(
                 self._cobra_merged_model,
