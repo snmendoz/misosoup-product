@@ -72,6 +72,10 @@ def main():
     print("=" * 78, flush=True)
 
     models, _, _, load_seconds = load_sample_models(sample)
+    print(
+        f"Models loaded: {len(models)} MAGs in {load_seconds:.3f}s.",
+        flush=True,
+    )
 
     model_sources = []
     for entry in sample["mags"]:
@@ -102,11 +106,23 @@ def main():
         create_solver=False,
     )
     build_seconds = perf_counter() - build_start
+    print(
+        f"Community built: {len(community.merged_model.reactions)} reactions; "
+        f"{len(community.merged_model.metabolites)} metabolites; "
+        f"{len(community.merged_model.genes)} genes in {build_seconds:.3f}s.",
+        flush=True,
+    )
 
+    medium_start = perf_counter()
     medium, medium_audit, medium_file_audit = resolve_medium(
         community,
         medium_path,
         args.uptake_bound,
+    )
+    print(
+        f"Medium resolved: {len(medium)} mapped exchanges in "
+        f"{perf_counter() - medium_start:.3f}s.",
+        flush=True,
     )
 
     all_exchange_reactions = sorted(get_community_exchanges(community))
@@ -195,6 +211,13 @@ def main():
         medium=medium,
     )
     lp_build_seconds = perf_counter() - lp_start
+    print(
+        f"LP built: {len(lp.reaction_ids)} variables; "
+        f"{lp.a_eq.shape[0]} equality rows; nnz={lp.a_eq.nnz}; "
+        f"{len(scan_candidates)} product candidates in "
+        f"{lp_build_seconds:.3f}s.",
+        flush=True,
+    )
 
     feasibility_start = perf_counter()
     feasibility = check_product_scan_feasibility(
@@ -202,6 +225,11 @@ def main():
         tolerance=args.production_tolerance,
     )
     feasibility_seconds = perf_counter() - feasibility_start
+    print(
+        f"Feasibility check finished: optimal={feasibility['optimal']} "
+        f"status={feasibility['status']} in {feasibility_seconds:.3f}s.",
+        flush=True,
+    )
     if not feasibility["optimal"]:
         raise RuntimeError(
             "Product Scan reference LP is infeasible/non-optimal: "
