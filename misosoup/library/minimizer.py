@@ -5,9 +5,8 @@ import os
 from enum import Enum
 
 import yaml
-from reframed.solvers.solution import Solution, Status
-
-from ..reframed.layered_community import LayeredCommunity
+from ..cobra.solver import Solution, Status
+from ..cobra.layered_community import LayeredCommunity
 
 
 class KnowledgeCriterion(Enum):
