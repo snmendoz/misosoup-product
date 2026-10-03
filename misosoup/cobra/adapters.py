@@ -97,3 +97,38 @@ class CobraModelAdapter:
         raise ValueError(
             f"Unable to identify biomass reaction for model {self.cobra_model.id}."
         )
+
+    def _refresh(self):
+        """Refresh mapping facades after structural COBRApy edits."""
+        refreshed = CobraModelAdapter(
+            self.cobra_model,
+            biomass_reaction=self.biomass_reaction,
+        )
+        self.compartments = refreshed.compartments
+        self.metabolites = refreshed.metabolites
+        self.reactions = refreshed.reactions
+        self.genes = refreshed.genes
+
+    def remove_reaction(self, reaction_id):
+        reaction = self.cobra_model.reactions.get_by_id(reaction_id)
+        self.cobra_model.remove_reactions([reaction], remove_orphans=False)
+        self._refresh()
+
+    def remove_reactions(self, reaction_ids):
+        reactions = [
+            self.cobra_model.reactions.get_by_id(reaction_id)
+            for reaction_id in reaction_ids
+        ]
+        self.cobra_model.remove_reactions(reactions, remove_orphans=False)
+        self._refresh()
+
+    def remove_metabolites(self, metabolite_ids):
+        metabolites = [
+            self.cobra_model.metabolites.get_by_id(metabolite_id)
+            for metabolite_id in metabolite_ids
+        ]
+        self.cobra_model.remove_metabolites(
+            metabolites,
+            destructive=False,
+        )
+        self._refresh()
