@@ -70,9 +70,8 @@ of the same size.
 import logging
 from pathlib import Path
 
-from reframed.solvers.solution import Status
-
-from ..reframed.layered_community import LayeredCommunity
+from ..cobra.solver import Status
+from ..cobra.layered_community import LayeredCommunity
 
 
 def _safe_name(value: str) -> str:
