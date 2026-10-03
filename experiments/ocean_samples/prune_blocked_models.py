@@ -24,27 +24,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from time import perf_counter
 
-from gurobipy import Env
-from reframed import FBA, FVA, ReactionType, save_cbmodel
-from reframed.solvers.solution import Status
+from cobra.flux_analysis import flux_variability_analysis
+from cobra.io import write_sbml_model
 
 from common import yaml_dump_atomic, yaml_load
 from misosoup.library.readwrite import load_models
-from misosoup.reframed.gurobi_env_solver import GurobiEnvSolver
-
-
-_WORKER_ENV = None
 
 
 def _worker_init() -> None:
-    """Create exactly one persistent Gurobi WLS environment per worker."""
-    global _WORKER_ENV
-    _WORKER_ENV = Env(
-        params={
-            "LogToConsole": 0,
-            "Method": 1,
-        }
-    )
+    """Worker initializer retained for ProcessPoolExecutor compatibility."""
+    return None
 
 
 def _source_fingerprint(path: Path) -> dict:
@@ -64,10 +53,7 @@ def _environmental_exchange_ids(model) -> list[str]:
         if rid == biomass:
             continue
 
-        if (
-            reaction.reaction_type == ReactionType.EXCHANGE
-            or rid.startswith("R_EX")
-        ):
+        if reaction.is_exchange or rid.startswith("R_EX"):
             ids.append(rid)
 
     return sorted(set(ids))
@@ -86,35 +72,28 @@ def _open_exchange_constraints(model, open_bound: float) -> dict:
     return constraints
 
 
-def _dispose_solver(solver) -> None:
-    try:
-        solver.problem.dispose()
-    except Exception:
-        pass
+def _apply_constraints(cobra_model, constraints: dict) -> None:
+    for rid, (lower, upper) in constraints.items():
+        reaction = cobra_model.reactions.get_by_id(rid)
+        reaction.lower_bound = float(lower)
+        reaction.upper_bound = float(upper)
 
 
 def _max_biomass(model, constraints: dict) -> float:
-    solver = GurobiEnvSolver(
-        model=model,
-        env=_WORKER_ENV,
-    )
-    try:
-        solution = FBA(
-            model,
-            objective=model.biomass_reaction,
-            constraints=constraints,
-            solver=solver,
-        )
-    finally:
-        _dispose_solver(solver)
+    cobra_model = model.cobra_model
 
-    if solution.status != Status.OPTIMAL:
-        raise RuntimeError(
-            "Open-exchange biomass FBA is not optimal: "
-            f"{solution.status}"
-        )
+    with cobra_model as working_model:
+        _apply_constraints(working_model, constraints)
+        working_model.objective = model.biomass_reaction
+        solution = working_model.optimize()
 
-    return float(solution.fobj)
+        if solution.status != "optimal":
+            raise RuntimeError(
+                "Open-exchange biomass FBA is not optimal: "
+                f"{solution.status}"
+            )
+
+        return float(solution.objective_value)
 
 
 def _remove_orphan_metabolites(model) -> list[str]:
@@ -208,29 +187,25 @@ def _prune_one(task: dict) -> dict:
     # Validate that the maximally permissive single-organism model is viable.
     biomass_before = _max_biomass(model, constraints)
 
-    solver = GurobiEnvSolver(
-        model=model,
-        env=_WORKER_ENV,
-    )
-    try:
-        variability = FVA(
-            model,
-            obj_frac=0,
-            reactions=list(model.reactions.keys()),
-            constraints=constraints,
+    cobra_model = model.cobra_model
+
+    with cobra_model as working_model:
+        _apply_constraints(working_model, constraints)
+        variability = flux_variability_analysis(
+            working_model,
+            reaction_list=list(model.reactions.keys()),
+            fraction_of_optimum=0.0,
             loopless=False,
-            solver=solver,
         )
-    finally:
-        _dispose_solver(solver)
 
     blocked = sorted(
         rid
-        for rid, bounds in variability.items()
+        for rid, row in variability.iterrows()
         if (
-            bounds[0] is not None
-            and bounds[1] is not None
-            and abs(float(bounds[0])) + abs(float(bounds[1]))
+            row["minimum"] is not None
+            and row["maximum"] is not None
+            and abs(float(row["minimum"]))
+            + abs(float(row["maximum"]))
             < tolerance
         )
     )
@@ -270,10 +245,9 @@ def _prune_one(task: dict) -> dict:
     temporary = output_model.with_name(
         output_model.stem + ".tmp.xml"
     )
-    save_cbmodel(
-        model,
+    write_sbml_model(
+        model.cobra_model,
         str(temporary),
-        flavor="fbc2",
     )
     os.replace(temporary, output_model)
 
