@@ -7,7 +7,7 @@ from reframed.solvers.solution import Status
 from reframed.solvers.solver import Parameter
 
 from misosoup.library.product_reference import (
-    constrain_full_community,
+    constrain_full_community_lp,
     find_producible_exchanges,
 )
 from misosoup.library.readwrite import load_models, read_compounds
@@ -71,7 +71,7 @@ community = LayeredCommunity(
 # 4. Force all organisms to be active
 # ---------------------------------------------------------
 
-constrain_full_community(
+constrain_full_community_lp(
     community,
     minimal_growth=MINIMAL_GROWTH,
 )
@@ -102,7 +102,7 @@ print(
 
 
 # ---------------------------------------------------------
-# 6. Positive side of FVA:
+# 6. Product Scan:
 #    maximize every global exchange independently
 # ---------------------------------------------------------
 
