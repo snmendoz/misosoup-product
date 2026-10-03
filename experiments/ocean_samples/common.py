@@ -29,7 +29,16 @@ def normalized_id(value: str) -> str:
     while changed:
         changed = False
         for suffix in (
-            ".xml", ".sbml", ".gz", "_model", "-model", ".model", "_gapseq", "-gapseq",
+            ".xml",
+            ".sbml",
+            ".gz",
+            "_without_blocked_reactions",
+            "-without-blocked-reactions",
+            "_model",
+            "-model",
+            ".model",
+            "_gapseq",
+            "-gapseq",
         ):
             if text.endswith(suffix):
                 text = text[: -len(suffix)]
