@@ -25,7 +25,9 @@ BOUND_INF = 1000
 class LayeredCommunity(Community):
     """Community model with additional layer of exchange reactions for each member."""
 
-    # Created lazily so merge-only workflows (e.g. parallel HiGHS product scan)\n    # do not acquire a Gurobi/WLS session merely by importing this module.\n    default_environment = None
+    # Created lazily so merge-only workflows (e.g. parallel HiGHS product scan)
+    # do not acquire a Gurobi/WLS session merely by importing this module.
+    default_environment = None
 
     def __init__(
         self,
