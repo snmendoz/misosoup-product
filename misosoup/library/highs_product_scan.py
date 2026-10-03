@@ -20,7 +20,7 @@ import numpy as np
 from scipy.optimize import linprog
 from scipy.sparse import csc_matrix
 
-from ..reframed.layered_community import BOUND_INF, LayeredCommunity
+from ..cobra.layered_community import BOUND_INF, LayeredCommunity
 
 
 @dataclass
