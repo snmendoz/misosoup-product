@@ -35,6 +35,7 @@ class LayeredCommunity(Community):
         copy_models=False,
         suffix="_i",
         params=None,
+        create_solver=True,
     ):
         super().__init__(
             community_id=community_id,
