@@ -14,8 +14,7 @@ if str(OCEAN_DIR) not in sys.path:
     sys.path.insert(0, str(OCEAN_DIR))
 from time import perf_counter
 
-from reframed.solvers.solution import Status
-from reframed.solvers.solver import Parameter, VarType
+from misosoup.cobra.solver import Status, Parameter, VarType
 
 from common import (
     read_medium_spec,
@@ -24,7 +23,7 @@ from common import (
     yaml_load,
 )
 from misosoup.library.readwrite import load_models
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 
 
 def parse_args() -> argparse.Namespace:
