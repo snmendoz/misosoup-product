@@ -4,7 +4,9 @@ import argparse
 import glob
 import logging
 import os
+import sys
 import textwrap
+from contextlib import redirect_stdout
 from collections import defaultdict
 
 import yaml
@@ -95,8 +97,8 @@ def main(args):
             os.makedirs(directory, exist_ok=True)
         with open(args.output, "w", encoding="utf8") as file_descriptor:
             file_descriptor.write(output)
-    else:
-        print(output)
+
+    return output
 
 
 def entry():
@@ -219,4 +221,11 @@ def entry():
     verbosity = logging.DEBUG if args_parsed.verbose else logging.INFO
     logging.basicConfig(level=verbosity, format="%(asctime)s %(message)s")
 
-    main(args_parsed)
+    # Keep stdout machine-readable. COBRApy, solver backends, or model
+    # parsers may emit informational text while building/solving models;
+    # route that text to stderr and reserve stdout for the final YAML.
+    with redirect_stdout(sys.stderr):
+        output = main(args_parsed)
+
+    if not args_parsed.output:
+        print(output)
