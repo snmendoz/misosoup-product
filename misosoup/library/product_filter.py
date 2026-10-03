@@ -35,7 +35,7 @@ Missing formulas are kept conservatively and explicitly flagged for review.
 import re
 from typing import Dict, Tuple
 
-from ..reframed.layered_community import LayeredCommunity
+from ..cobra.layered_community import LayeredCommunity
 
 
 # Elements that define the biological scope of the product analysis.
