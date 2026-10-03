@@ -8,7 +8,7 @@ from time import perf_counter
 
 from common import yaml_dump_atomic, yaml_load
 from misosoup.library.minimal_product_communities import findMinimalProductCommunities
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 from run_sample import (
     build_medium_uptake_audit,
     build_product_preservation_audit,
