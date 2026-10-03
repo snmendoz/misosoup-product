@@ -1170,6 +1170,96 @@ def solvepFBAUsingFixProducts(
         print("C0 TARGET BALANCE DIAGNOSTIC")
         print("=" * 70)
 
+        # Also print the stoichiometry of the local glycogen reaction that
+        # participates in this balance.
+        target_reaction_id = "GLYCOe_I3M07"
+        target_reaction = community.merged_model.reactions.get(
+            target_reaction_id
+        )
+
+        print()
+        print("=" * 70)
+        print("TARGET REACTION STOICHIOMETRY")
+        print("=" * 70)
+        print(f"Reaction: {target_reaction_id}", flush=True)
+
+        if target_reaction is None:
+            print(
+                "Reaction not found in the merged community model.",
+                flush=True,
+            )
+        else:
+            print(
+                f"Name: {getattr(target_reaction, 'name', '')}",
+                flush=True,
+            )
+            print(
+                f"LB: {getattr(target_reaction, 'lb', None)}; "
+                f"UB: {getattr(target_reaction, 'ub', None)}",
+                flush=True,
+            )
+            print("Stoichiometry:", flush=True)
+
+            stoich_items = list(
+                getattr(target_reaction, "stoichiometry", {}).items()
+            )
+
+            if stoich_items:
+                equation_lhs = []
+                equation_rhs = []
+
+                for metabolite_id, coefficient in stoich_items:
+                    metabolite = community.merged_model.metabolites.get(
+                        metabolite_id
+                    )
+                    compartment = (
+                        getattr(metabolite, "compartment", "")
+                        if metabolite is not None
+                        else ""
+                    )
+                    name = (
+                        getattr(metabolite, "name", "")
+                        if metabolite is not None
+                        else ""
+                    )
+
+                    print(
+                        f"  {metabolite_id:45s} "
+                        f"coeff={float(coefficient):+.12g} "
+                        f"compartment={compartment} "
+                        f"name={name}",
+                        flush=True,
+                    )
+
+                    magnitude = abs(float(coefficient))
+                    label = (
+                        f"{magnitude:.12g} {metabolite_id}"
+                        if abs(magnitude - 1.0) > 1e-12
+                        else metabolite_id
+                    )
+
+                    if float(coefficient) < 0:
+                        equation_lhs.append(label)
+                    elif float(coefficient) > 0:
+                        equation_rhs.append(label)
+
+                print()
+                print(
+                    "Reaction equation:",
+                    flush=True,
+                )
+                print(
+                    "  "
+                    + (" + ".join(equation_lhs) if equation_lhs else "0")
+                    + " -> "
+                    + (" + ".join(equation_rhs) if equation_rhs else "0"),
+                    flush=True,
+                )
+            else:
+                print("  No stoichiometric entries.", flush=True)
+
+        print("=" * 70)
+
         if diagnostic_constraint is None:
             print(
                 "Could not find the glycogen1500_e_I3M07 mass-balance "
