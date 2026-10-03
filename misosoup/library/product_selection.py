@@ -1025,6 +1025,54 @@ def solvepFBAUsingFixProducts(
             flush=True,
         )
 
+        # Numerical diagnostics for reactions implicated by the IIS and
+        # pinpoint search.
+        gurobi_model = community.solver.problem
+        diagnostic_reactions = [
+            "R_AACPS3_A1R12",
+            "R_AACPS3_I2R16",
+            "R_AACPS3_I3M07",
+            "R_SUCD1_A1R12",
+            "R_SUCD1_I2R16",
+            "R_SUCD1_I3M07",
+        ]
+
+        print("Stage C numerical diagnostics at C0:", flush=True)
+        for diagnostic_rid in diagnostic_reactions:
+            var = gurobi_model.getVarByName(diagnostic_rid)
+            if var is None:
+                print(
+                    f"  {diagnostic_rid}: variable not found",
+                    flush=True,
+                )
+                continue
+
+            value = None
+            try:
+                value = var.X
+            except Exception:
+                pass
+
+            print(
+                f"  {diagnostic_rid}: "
+                f"LB={var.LB:.12g}, UB={var.UB:.12g}, X={value}",
+                flush=True,
+            )
+
+        try:
+            print(
+                "  Gurobi quality: "
+                f"MaxVio={gurobi_model.MaxVio:.12g}, "
+                f"BoundVio={gurobi_model.BoundVio:.12g}, "
+                f"ConstrVio={gurobi_model.ConstrVio:.12g}",
+                flush=True,
+            )
+        except Exception as error:
+            print(
+                f"  Unable to read Gurobi quality attributes: {error}",
+                flush=True,
+            )
+
         # Diagnostic repeat with no model changes. If this second solve fails,
         # the solver is mutating state simply by solving C0.
         print(
@@ -1172,6 +1220,57 @@ def solvepFBAUsingFixProducts(
 
         if should_check:
             community.solver.update()
+
+            if rid == "R_AACPS3_I3M07":
+                gurobi_model = community.solver.problem
+                flux_var = gurobi_model.getVarByName(rid)
+                abs_var = gurobi_model.getVarByName(absolute_name)
+
+                print(
+                    "Stage C pinpoint diagnostics immediately before "
+                    "solving R_AACPS3_I3M07:",
+                    flush=True,
+                )
+                print(
+                    f"  flux {rid}: "
+                    f"LB={flux_var.LB:.12g}, UB={flux_var.UB:.12g}",
+                    flush=True,
+                )
+                print(
+                    f"  aux {absolute_name}: "
+                    f"LB={abs_var.LB:.12g}, UB={abs_var.UB:.12g}",
+                    flush=True,
+                )
+
+                pos_constraint = gurobi_model.getConstrByName(
+                    f"c_pfba_abs_pos_{index}"
+                )
+                neg_constraint = gurobi_model.getConstrByName(
+                    f"c_pfba_abs_neg_{index}"
+                )
+                if pos_constraint is not None:
+                    row = gurobi_model.getRow(pos_constraint)
+                    print(
+                        f"  {pos_constraint.ConstrName}: "
+                        f"{row} {pos_constraint.Sense} {pos_constraint.RHS}",
+                        flush=True,
+                    )
+                if neg_constraint is not None:
+                    row = gurobi_model.getRow(neg_constraint)
+                    print(
+                        f"  {neg_constraint.ConstrName}: "
+                        f"{row} {neg_constraint.Sense} {neg_constraint.RHS}",
+                        flush=True,
+                    )
+
+                gurobi_model.write(
+                    "stage_c_before_AACPS3_I3M07.lp"
+                )
+                print(
+                    "  wrote stage_c_before_AACPS3_I3M07.lp",
+                    flush=True,
+                )
+
             print(
                 f"Stage C.3 pinpoint: constraints added through "
                 f"reaction {completed}/{len(reaction_ids)} "
