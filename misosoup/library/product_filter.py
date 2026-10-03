@@ -44,6 +44,7 @@ TARGET_ELEMENTS = {"C", "N", "S", "P"}
 # Molecular oxygen is deliberately treated as a separate configurable class.
 OXYGEN_IDS = {
     "o2",
+    "cpd00007",  # ModelSEED/gapseq molecular oxygen
 }
 
 
@@ -62,8 +63,12 @@ def _normalize_metabolite_id(metabolite_id: str) -> str:
     if value.startswith("M_"):
         value = value[2:]
 
-    if value.endswith("_e"):
-        value = value[:-2]
+    # BiGG/ReFramed models commonly use "_e"; gapseq models often use
+    # "_e0" for the extracellular compartment. Strip the longer suffix first.
+    for suffix in ("_e0", "_e"):
+        if value.endswith(suffix):
+            value = value[:-len(suffix)]
+            break
 
     return value.lower()
 
@@ -126,6 +131,95 @@ def _get_exchange_metabolite(
     return community.merged_model.metabolites[
         metabolite_id
     ]
+
+
+def _classify_exchange_candidate(
+    community: LayeredCommunity,
+    reaction_id: str,
+    keep_oxygen: bool = True,
+) -> dict:
+    """Classify one exchange before any optimization is performed.
+
+    This is intentionally independent of flux values so biologically irrelevant
+    exchanges (for example water, protons, H2 and metals) can be removed from
+    the expensive product-maximization scan.
+    """
+    metabolite = _get_exchange_metabolite(
+        community,
+        reaction_id,
+    )
+
+    metabolite_id = metabolite.id
+    normalized_id = _normalize_metabolite_id(
+        metabolite_id
+    )
+    formula = metabolite.metadata.get("FORMULA")
+    element_counts = _parse_formula(formula)
+    elements = set(element_counts.keys())
+    matched_target_elements = sorted(
+        elements & TARGET_ELEMENTS
+    )
+
+    keep = False
+    reason = "outside_CNSP_scope"
+
+    if not formula:
+        keep = True
+        reason = "missing_formula_kept_for_review"
+    elif matched_target_elements:
+        keep = True
+        reason = (
+            "contains_target_element:"
+            + ",".join(matched_target_elements)
+        )
+    elif (
+        normalized_id in OXYGEN_IDS
+        or str(formula).strip().upper() == "O2"
+    ):
+        keep = bool(keep_oxygen)
+        reason = (
+            "oxygen_kept"
+            if keep_oxygen
+            else "oxygen_excluded"
+        )
+
+    return {
+        "metabolite_id": metabolite_id,
+        "metabolite_name": metabolite.name,
+        "formula": formula,
+        "elements": sorted(elements),
+        "target_elements": matched_target_elements,
+        "keep": keep,
+        "reason": reason,
+    }
+
+
+def filter_exchange_candidates(
+    community: LayeredCommunity,
+    exchange_reactions: list,
+    keep_oxygen: bool = True,
+) -> Tuple[list, dict]:
+    """Filter global exchanges *before* individual product maximization.
+
+    Only exchanges relevant to C/N/S/P metabolism (plus O2 when requested)
+    are returned for optimization. Exchanges with missing formula are retained
+    conservatively and flagged for review.
+    """
+    selected = []
+    audit = {}
+
+    for reaction_id in sorted(exchange_reactions):
+        classification = _classify_exchange_candidate(
+            community,
+            reaction_id,
+            keep_oxygen=keep_oxygen,
+        )
+        audit[reaction_id] = classification
+
+        if classification["keep"]:
+            selected.append(reaction_id)
+
+    return selected, audit
 
 
 def filter_product_candidates(
@@ -193,92 +287,20 @@ def filter_product_candidates(
     audit = {}
 
     for reaction_id, maximum in max_secretion.items():
-
-        metabolite = _get_exchange_metabolite(
+        classification = _classify_exchange_candidate(
             community,
             reaction_id,
+            keep_oxygen=keep_oxygen,
         )
 
-        metabolite_id = metabolite.id
-        normalized_id = _normalize_metabolite_id(
-            metabolite_id
-        )
-
-        # ReFramed stores FBC molecular formulas under metadata["FORMULA"].
-        formula = metabolite.metadata.get(
-            "FORMULA"
-        )
-
-        element_counts = _parse_formula(
-            formula
-        )
-
-        elements = set(
-            element_counts.keys()
-        )
-
-        matched_target_elements = sorted(
-            elements & TARGET_ELEMENTS
-        )
-
-        keep = False
-        reason = "outside_CNSP_scope"
-
-        # --------------------------------------------------------------
-        # Rule 1: missing formula -> KEEP conservatively.
-        # --------------------------------------------------------------
-        if not formula:
-            keep = True
-            reason = "missing_formula_kept_for_review"
-
-        # --------------------------------------------------------------
-        # Rule 2: any C/N/S/P atom -> KEEP.
-        #
-        # This automatically retains CO2, H2S, elemental sulfur,
-        # ammonium/nitrate/nitrite, sulfate/sulfite and phosphate.
-        # --------------------------------------------------------------
-        elif matched_target_elements:
-            keep = True
-            reason = (
-                "contains_target_element:"
-                + ",".join(matched_target_elements)
-            )
-
-        # --------------------------------------------------------------
-        # Rule 3: molecular oxygen is configurable.
-        # --------------------------------------------------------------
-        elif normalized_id in OXYGEN_IDS:
-            keep = bool(keep_oxygen)
-            reason = (
-                "oxygen_kept"
-                if keep_oxygen
-                else "oxygen_excluded"
-            )
-
-        # --------------------------------------------------------------
-        # Rule 4: everything else is outside the C/N/S/P scope.
-        #
-        # Examples:
-        # H+, H2O, H2, Fe2+, Fe3+, Cu2+, Na+, K+, Mg2+, Ca2+.
-        # --------------------------------------------------------------
-        else:
-            keep = False
-            reason = "outside_CNSP_scope"
-
-        if keep:
+        if classification["keep"]:
             filtered_products[
                 reaction_id
             ] = maximum
 
         audit[reaction_id] = {
-            "metabolite_id": metabolite_id,
-            "metabolite_name": metabolite.name,
-            "formula": formula,
-            "elements": sorted(elements),
-            "target_elements": matched_target_elements,
+            **classification,
             "maximum_secretion": float(maximum),
-            "keep": keep,
-            "reason": reason,
         }
 
     return filtered_products, audit

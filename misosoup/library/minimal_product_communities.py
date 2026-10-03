@@ -142,6 +142,7 @@ def _extract_community_solution(
     organism_variables: dict,
     selected_products: list,
     product_requirements: dict,
+    medium: dict,
     tolerance: float,
 ) -> dict:
     """Convert one minimum-community solution into a serializable dictionary."""
@@ -202,12 +203,27 @@ def _extract_community_solution(
         )
     )
 
+    # Preserve the raw global-exchange fluxes for every compound in the
+    # configured medium.  Negative exchange flux is uptake, while positive
+    # exchange flux is secretion.  These values are used by the experiment
+    # layer to audit whether a minimum community is relying on uptake bounds.
+    medium_exchange_fluxes = {
+        rid: float(
+            solution.values.get(
+                rid,
+                0.0,
+            )
+        )
+        for rid in medium
+    }
+
     return {
         "organisms": organisms,
         "size": len(organisms),
         "organism_growth": organism_growth,
         "community_growth": community_growth,
         "product_fluxes": product_fluxes,
+        "medium_exchange_fluxes": medium_exchange_fluxes,
     }
 
 
@@ -307,6 +323,13 @@ def findMinimalProductCommunities(
             "reference_products is empty."
         )
 
+    print(
+        f"Stage D.0: fresh community with {len(community.organisms)} candidate organisms; "
+        f"preserving {len(reference_products)} products at "
+        f"{100.0 * product_retention:.3g}% of Stage-C reference flux.",
+        flush=True,
+    )
+
     # ==================================================================
     # D.0 CREATE ORGANISM-SELECTION VARIABLES AND APPLY MEDIUM
     # ==================================================================
@@ -337,6 +360,17 @@ def findMinimalProductCommunities(
         org_id: f"y_{org_id}"
         for org_id in community.organisms
     }
+
+    print(
+        f"Stage D.0 COMPLETE: {len(organism_variables)} organism-selection "
+        "variables and medium constraints installed.",
+        flush=True,
+    )
+
+    print(
+        "Stage D.1: adding product-preservation constraints...",
+        flush=True,
+    )
 
     # ==================================================================
     # D.1 PRODUCT-PRESERVATION CONSTRAINTS
@@ -400,6 +434,11 @@ def findMinimalProductCommunities(
         product_requirements.keys()
     )
 
+    print(
+        f"Stage D.1 COMPLETE: {len(selected_products)} product constraints added.",
+        flush=True,
+    )
+
     # ==================================================================
     # VALUES TO RETRIEVE FROM EVERY SOLUTION
     # ==================================================================
@@ -419,6 +458,7 @@ def findMinimalProductCommunities(
     values_to_get = (
         list(organism_variables.values())
         + selected_products
+        + list(medium.keys())
         + biomass_reactions
         + [community.merged_model.biomass_reaction]
     )
@@ -440,6 +480,12 @@ def findMinimalProductCommunities(
     logging.info(
         "Stage D: minimizing community size while preserving %i products.",
         len(selected_products),
+    )
+
+    print(
+        f"Stage D.2: solving minimum-cardinality MILP for "
+        f"{len(organism_variables)} organisms and {len(selected_products)} products...",
+        flush=True,
     )
 
     first_solution = community.solver.solve(
@@ -476,6 +522,11 @@ def findMinimalProductCommunities(
         minimum_size,
     )
 
+    print(
+        f"Stage D.2 COMPLETE: global minimum community size N_min={minimum_size}.",
+        flush=True,
+    )
+
     # ==================================================================
     # D.3 FIX CARDINALITY TO N_min
     # ==================================================================
@@ -494,6 +545,12 @@ def findMinimalProductCommunities(
 
     community.solver.update()
 
+    print(
+        f"Stage D.3: cardinality fixed at N_min={minimum_size}; "
+        "recording first optimum and preparing alternative enumeration.",
+        flush=True,
+    )
+
     communities = [
         _extract_community_solution(
             community=community,
@@ -501,6 +558,7 @@ def findMinimalProductCommunities(
             organism_variables=organism_variables,
             selected_products=selected_products,
             product_requirements=product_requirements,
+            medium=medium,
             tolerance=tolerance,
         )
     ]
@@ -544,6 +602,16 @@ def findMinimalProductCommunities(
 
     enumeration_complete = False
 
+    print(
+        f"Stage D.4: enumerating alternative minimum communities "
+        f"(cap={max_communities if max_communities is not None else 'none'}).",
+        flush=True,
+    )
+    print(
+        f"Stage D.4: community 1 found; size={minimum_size}; members={first_selected}.",
+        flush=True,
+    )
+
     while True:
 
         # Stop early if the user requested an enumeration cap.
@@ -559,6 +627,10 @@ def findMinimalProductCommunities(
             break
 
         # With cardinality already fixed, a zero objective is sufficient.
+        print(
+            f"Stage D.4: searching for community {len(communities) + 1}...",
+            flush=True,
+        )
         solution = community.solver.solve(
             objective={},
             get_values=values_to_get,
@@ -566,10 +638,19 @@ def findMinimalProductCommunities(
         )
 
         # No more feasible solution of size N_min:
-        # enumeration is complete.
-        if solution.status != Status.OPTIMAL:
+        # enumeration is complete only when the solver explicitly proves
+        # infeasibility. Other statuses (for example numerical failure or a
+        # time limit) must not be silently misclassified as exhaustive
+        # enumeration.
+        if solution.status == Status.INFEASIBLE:
             enumeration_complete = True
             break
+
+        if solution.status != Status.OPTIMAL:
+            raise RuntimeError(
+                "Stage D enumeration stopped before completion. "
+                f"Solver status: {solution.status}"
+            )
 
         selected = _selected_organisms(
             solution,
@@ -599,9 +680,22 @@ def findMinimalProductCommunities(
             selected,
         )
 
+        print(
+            f"Stage D.4: community {len(communities)} found; "
+            f"size={minimum_size}; members={selected}.",
+            flush=True,
+        )
+
         add_no_good_cut(
             selected
         )
+
+    print(
+        f"Stage D COMPLETE: N_min={minimum_size}; "
+        f"communities_found={len(communities)}; "
+        f"enumeration_complete={enumeration_complete}.",
+        flush=True,
+    )
 
     return {
         "minimum_size": minimum_size,
