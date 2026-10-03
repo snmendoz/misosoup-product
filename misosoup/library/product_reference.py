@@ -58,15 +58,20 @@ def constrain_full_community_lp(
     for org_id, org_model in community.organisms.items():
         biomass_rid = org_model.biomass_reaction
 
-        for r_id in org_model.reactions:
-            if not r_id.startswith("R_EX") and r_id != biomass_rid:
+        for r_id, reaction in org_model.reactions.items():
+            is_exchange = bool(
+                getattr(reaction, "is_exchange", False)
+                or r_id.startswith("R_EX")
+            )
+
+            if not is_exchange and r_id != biomass_rid:
                 continue
 
             merged_id = community.reaction_map[(org_id, r_id)]
 
             if r_id == biomass_rid:
                 fixed_bounds[merged_id] = (minimal_growth, BOUND_INF)
-            elif r_id.startswith("R_EX"):
+            elif is_exchange:
                 fixed_bounds[merged_id] = (-BOUND_INF, BOUND_INF)
 
     gurobi_model = community.solver.problem
