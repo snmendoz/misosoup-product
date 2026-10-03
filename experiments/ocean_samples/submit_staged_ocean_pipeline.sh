@@ -11,7 +11,7 @@ fi
 
 MANIFEST="$(readlink -f "$1")"
 OUTPUT_ROOT="$(readlink -m "$2")"
-MEDIUM_FILE="${3:-$HOME/misosoup_product/experiments/ocean_samples/media/complex_media_gapseq2.csv}"
+MEDIUM_FILE="${3:-$HOME/misosoup_product/experiments/ocean_samples/media/ocean_complete_media.csv}"
 MEDIUM_FILE="$(readlink -f "$MEDIUM_FILE")"
 
 mkdir -p "$OUTPUT_ROOT/logs" "$OUTPUT_ROOT/samples"
