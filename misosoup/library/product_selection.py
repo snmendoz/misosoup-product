@@ -28,19 +28,21 @@ Stage C
 solvepFBAUsingFixProducts()
 
     Fix the product set selected by Stage B and obtain a parsimonious
-    reference flux distribution using the classical split-flux pFBA
+    reference flux distribution using an absolute-value epigraph pFBA
     formulation:
 
-        v_r = v_r^+ - v_r^-
+        a_r >= v_r
+        a_r >= -v_r
+        a_r >= 0
 
-        v_r^+ >= 0
-        v_r^- >= 0
-
-        min sum_r (v_r^+ + v_r^-)
+        min sum_r a_r
 
     At the optimum:
 
-        v_r^+ + v_r^- = |v_r|
+        a_r = |v_r|
+
+    This formulation leaves the feasible region of the biological flux
+    variables unchanged while still minimizing total absolute flux.
 
 Important
 ---------
@@ -785,8 +787,8 @@ def solvepFBAUsingFixProducts(
 
     Diagnostic checkpoints:
 
-        C0: fresh biological problem before split variables
-        C1: split variables/equalities added, no pFBA objective
+        C0: fresh biological problem before pFBA auxiliaries
+        C1: absolute-value epigraph auxiliaries added, no pFBA objective
         C2: pFBA minimization
 
     The formulation is:
@@ -798,10 +800,11 @@ def solvepFBAUsingFixProducts(
         v_i >= M_i q_i
         sum_i q_i >= Q* - epsilon
 
-        v_r = v_r^+ - v_r^-
-        v_r^+, v_r^- >= 0
+        a_r >= v_r
+        a_r >= -v_r
+        a_r >= 0
 
-        min sum_r(v_r^+ + v_r^-)
+        min sum_r a_r
     """
 
     if lexicographic_tolerance < 0:
@@ -1023,107 +1026,108 @@ def solvepFBAUsingFixProducts(
         )
 
     # --------------------------------------------------------------
-    # Add classical split-flux variables.
+    # Add absolute-value epigraph variables.
+    #
+    # For each biological flux v_r introduce a_r >= 0 with:
+    #
+    #     a_r >=  v_r
+    #     a_r >= -v_r
+    #
+    # Minimizing sum(a_r) then gives a_r = |v_r| at optimum.
+    # Unlike an exact split-flux equality, these auxiliary constraints
+    # cannot remove any feasible value of the original flux v_r.
     # --------------------------------------------------------------
     reaction_ids = sorted(
         community.merged_model.reactions.keys()
     )
 
-    positive_variables = {}
-    negative_variables = {}
+    absolute_variables = {}
 
     logging.info(
-        "Stage C: creating split variables for %i reactions.",
+        "Stage C: creating absolute-flux variables for %i reactions.",
         len(reaction_ids),
     )
 
     print(
-        f"Stage C.2: creating 2 split variables for each of "
+        f"Stage C.2: creating 1 absolute-flux variable for each of "
         f"{len(reaction_ids)} reactions...",
         flush=True,
     )
 
     for index, rid in enumerate(reaction_ids):
 
-        positive_name = f"pfba_pos_{index}"
-        negative_name = f"pfba_neg_{index}"
-
-        # Canonical split-flux representation:
-        #
-        #     v_r = v_r^+ - v_r^-
-        #     v_r^+, v_r^- >= 0
-        #
-        # The original flux variable v_r already carries all biological
-        # bounds and constraints.  The auxiliary split variables therefore
-        # do not need reaction-derived upper bounds.  Leaving them unbounded
-        # above preserves feasibility exactly; the pFBA objective minimizes
-        # their sum and yields v_r^+ + v_r^- = |v_r| at optimum.
-        positive_upper = GRB.INFINITY
-        negative_upper = GRB.INFINITY
+        absolute_name = f"pfba_abs_{index}"
 
         community.solver.add_variable(
-            positive_name,
+            absolute_name,
             0,
-            positive_upper,
+            float("inf"),
             vartype=VarType.CONTINUOUS,
         )
 
-        community.solver.add_variable(
-            negative_name,
-            0,
-            negative_upper,
-            vartype=VarType.CONTINUOUS,
-        )
-
-        positive_variables[rid] = positive_name
-        negative_variables[rid] = negative_name
+        absolute_variables[rid] = absolute_name
 
         completed = index + 1
         if completed % 50000 == 0 or completed == len(reaction_ids):
             print(
-                f"Stage C.2 split variables: {completed}/{len(reaction_ids)} reactions.",
+                f"Stage C.2 absolute variables: "
+                f"{completed}/{len(reaction_ids)} reactions.",
                 flush=True,
             )
 
     community.solver.update()
 
     print(
-        "Stage C.3: adding split-flux equality constraints...",
+        "Stage C.3: adding absolute-value epigraph constraints...",
         flush=True,
     )
 
     for index, rid in enumerate(reaction_ids):
 
+        absolute_name = absolute_variables[rid]
+
+        # a_r >= v_r  ->  a_r - v_r >= 0
         community.solver.add_constraint(
-            f"c_pfba_split_flux_{index}",
+            f"c_pfba_abs_pos_{index}",
             {
-                rid: 1,
-                positive_variables[rid]: -1,
-                negative_variables[rid]: 1,
+                absolute_name: 1,
+                rid: -1,
             },
-            "=",
+            ">",
+            0,
+        )
+
+        # a_r >= -v_r  ->  a_r + v_r >= 0
+        community.solver.add_constraint(
+            f"c_pfba_abs_neg_{index}",
+            {
+                absolute_name: 1,
+                rid: 1,
+            },
+            ">",
             0,
         )
 
         completed = index + 1
         if completed % 50000 == 0 or completed == len(reaction_ids):
             print(
-                f"Stage C.3 split constraints: {completed}/{len(reaction_ids)} reactions.",
+                f"Stage C.3 absolute constraints: "
+                f"{completed}/{len(reaction_ids)} reactions.",
                 flush=True,
             )
 
     community.solver.update()
 
     # --------------------------------------------------------------
-    # C1: split representation added, still no pFBA objective.
+    # C1: epigraph representation added, still no pFBA objective.
     # --------------------------------------------------------------
     if check_feasibility:
         print(
-            "Stage C.4: checking feasibility of the split-flux model...",
+            "Stage C.4: checking feasibility of the absolute-flux model...",
             flush=True,
         )
         logging.info(
-            "Stage C1: checking feasibility after split-flux constraints."
+            "Stage C1: checking feasibility after absolute-flux constraints."
         )
 
         c1_solution = community.solver.solve(
@@ -1135,35 +1139,29 @@ def solvepFBAUsingFixProducts(
         if c1_solution.status != Status.OPTIMAL:
             _raise_with_iis(
                 community=community,
-                stage_name="Stage C1 fresh split-flux model",
-                filename="stage_c1_fresh_iis.ilp",
+                stage_name="Stage C1 fresh absolute-flux model",
+                filename="stage_c1_fresh_absolute_iis.ilp",
                 status=c1_solution.status,
             )
 
         logging.info(
-            "Stage C1 fresh split-flux model is feasible."
+            "Stage C1 fresh absolute-flux model is feasible."
         )
         print(
-            "Stage C.4 COMPLETE: split-flux model is feasible.",
+            "Stage C.4 COMPLETE: absolute-flux model is feasible.",
             flush=True,
         )
 
     # --------------------------------------------------------------
     # C2: actual pFBA objective.
     # --------------------------------------------------------------
-    pfba_objective = {}
-
-    for rid in reaction_ids:
-        pfba_objective[
-            positive_variables[rid]
-        ] = 1
-
-        pfba_objective[
-            negative_variables[rid]
-        ] = 1
+    pfba_objective = {
+        absolute_variables[rid]: 1
+        for rid in reaction_ids
+    }
 
     logging.info(
-        "Stage C2: minimizing total split flux."
+        "Stage C2: minimizing total absolute flux."
     )
 
     print(
