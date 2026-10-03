@@ -5,6 +5,29 @@ from types import SimpleNamespace
 from misosoup.library.product_filter import filter_exchange_candidates
 
 
+def _community(exchange_specs):
+    """Build a minimal community fixture from exchange specifications."""
+    metabolites = {}
+    reactions = {}
+
+    for reaction_id, (metabolite_id, name, formula) in exchange_specs.items():
+        metabolites[metabolite_id] = SimpleNamespace(
+            id=metabolite_id,
+            name=name,
+            metadata={"FORMULA": formula} if formula else {},
+        )
+        reactions[reaction_id] = SimpleNamespace(
+            stoichiometry={metabolite_id: -1}
+        )
+
+    return SimpleNamespace(
+        merged_model=SimpleNamespace(
+            reactions=reactions,
+            metabolites=metabolites,
+        )
+    )
+
+
 def _community_with_exchanges():
     metabolites = {
         "M_h2o_e0": SimpleNamespace(
