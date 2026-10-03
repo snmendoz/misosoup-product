@@ -37,6 +37,7 @@ JOB_ID="$(sbatch --parsable \
   --partition="${OCEAN_PRODUCT_SCAN_PARTITION:-general}" \
   --cpus-per-task="${OCEAN_PRODUCT_SCAN_CPUS:-8}" \
   --mem="${OCEAN_PRODUCT_SCAN_MEM:-32G}" \
+  --time="${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}" \
   --array="0-${LAST_INDEX}" \
   --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/product_scan_%A_%a.out" \
@@ -54,7 +55,7 @@ cpus_per_sample=${OCEAN_PRODUCT_SCAN_CPUS:-8}
 memory_per_sample=${OCEAN_PRODUCT_SCAN_MEM:-32G}
 solver=HiGHS
 exchange_parallelism=SLURM_CPUS_PER_TASK
-explicit_walltime=none
+product_scan_time=${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}
 EOF
 
 echo "Product Scan array : $JOB_ID"
@@ -62,5 +63,5 @@ echo "Samples            : 0-$LAST_INDEX"
 echo "CPUs/sample        : ${OCEAN_PRODUCT_SCAN_CPUS:-8}"
 echo "Memory/sample      : ${OCEAN_PRODUCT_SCAN_MEM:-32G}"
 echo "Exchange workers   : ${OCEAN_PRODUCT_SCAN_CPUS:-8} per running sample"
-echo "Explicit time limit: none"
+echo "Time limit         : ${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}"
 echo "Output             : $OUTPUT_ROOT"
