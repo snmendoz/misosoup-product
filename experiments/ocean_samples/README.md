@@ -13,7 +13,7 @@ For every sample, the workflow:
 
 1. loads only the MAG models present in that sample;
 2. builds the full sample community;
-3. applies the headerless `mathomics.txt` medium;
+3. applies the Tara Chile `ocean_complete_media.csv` medium;
 4. computes individual maximum secretion for every producible global exchange;
 5. applies the C/N/S/P product filter;
 6. runs Stage A to obtain `K*`, the maximum number of simultaneous products;
@@ -39,26 +39,24 @@ Expected model directory:
 Models/gapseq/models/
 ```
 
-Final expected medium:
+Required Tara Chile medium:
 
 ```text
-Models/gapseq/media/mathomics.txt
+Models/gapseq/media/ocean_complete_media.csv
 ```
 
-Until that file is added to the TARA Chile repository, the workflow falls back
-automatically to the temporary medium bundled in MiSoSoup:
+MiSoSoup also carries a repository copy at:
 
 ```text
-experiments/ocean_samples/media/complex_media_gapseq2.csv
+experiments/ocean_samples/media/ocean_complete_media.csv
 ```
 
-The temporary CSV contains 125 compounds with columns `compound`, `name`, and
-`maxFlux`. Its `maxFlux` values are used directly as uptake magnitudes; for
-example `maxFlux = 10` becomes a global-exchange lower bound of `-10`.
+This CSV is the authoritative medium for the 1,375 Tara Chile MAG workflows.
+The separate three-species integration test continues to use
+`examples/marine/media.yaml` with medium `ac`.
 
-The future `mathomics.txt` format is also supported: one metabolite per row and
-no header. Headerless entries use the fallback uptake lower bound `-1000`, which
-can be changed with `OCEAN_UPTAKE_BOUND`.
+The CSV contains the Tara Chile ModelSEED compounds and their per-compound
+`maxFlux` values; those values are used directly as uptake magnitudes.
 
 The abundance matrix is already available in the TARA Chile repository at:
 
