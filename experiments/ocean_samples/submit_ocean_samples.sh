@@ -60,8 +60,8 @@ DATA_REPO="${2:-${OCEAN_DATA_REPO:-$HOME/tara_chile_metabolic_models}}"
 DATA_REPO="${DATA_REPO/#\~/$HOME}"
 
 MODELS_DIR="${OCEAN_MODELS_DIR:-$DATA_REPO/Models/gapseq/models}"
-TARA_MEDIUM="$DATA_REPO/Models/gapseq/media/mathomics.txt"
-BUNDLED_MEDIUM="$REPO_ROOT/experiments/ocean_samples/media/complex_media_gapseq2.csv"
+TARA_MEDIUM="$DATA_REPO/Models/gapseq/media/ocean_complete_media.csv"
+BUNDLED_MEDIUM="$REPO_ROOT/experiments/ocean_samples/media/ocean_complete_media.csv"
 DEFAULT_MATRIX="$DATA_REPO/Data/CEODOS_MAG_TPMs_IDs_matrix.tsv"
 MATRIX_INPUT="${1:-${OCEAN_ABUNDANCE_MATRIX:-$DEFAULT_MATRIX}}"
 
@@ -106,7 +106,7 @@ elif [[ -f "$TARA_MEDIUM" ]]; then
     MEDIUM_FILE="$TARA_MEDIUM"
 else
     MEDIUM_FILE="$BUNDLED_MEDIUM"
-    echo "mathomics.txt not found; using bundled temporary medium:"
+    echo "ocean_complete_media.csv not found in Tara repository; using bundled repository copy:"
     echo "  $MEDIUM_FILE"
 fi
 
