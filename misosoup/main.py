@@ -8,13 +8,13 @@ import textwrap
 from collections import defaultdict
 
 import yaml
-from reframed.solvers.solver import Parameter
+from .cobra.solver import Parameter
 
 from .library.getters import get_biomass, get_exchange_reactions
 from .library.minimizer import Minimizer
 from .library.readwrite import load_models, read_compounds
 from .library.validate import validate_solution_dict
-from .reframed.layered_community import LayeredCommunity
+from .cobra.layered_community import LayeredCommunity
 
 
 def main(args):
