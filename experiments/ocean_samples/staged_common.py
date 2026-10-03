@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from time import perf_counter
 
-from reframed.solvers.solver import Parameter
+from misosoup.cobra.solver import Parameter
 
 from common import (
     read_medium_spec,
