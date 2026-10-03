@@ -160,6 +160,115 @@ def _raise_with_iis(
         print()
         print(f"IIS written to: {iis_path}")
 
+        # Quantify the magnitude of infeasibility.  An IIS identifies which
+        # bounds/constraints participate in a contradiction, but not how far
+        # the model is from feasibility.  Gurobi feasibility relaxation adds
+        # non-negative artificial variables representing the minimum amount
+        # each bound/constraint must move to recover a feasible model.
+        print()
+        print("=" * 70)
+        print("MINIMUM FEASIBILITY RELAXATION")
+        print("=" * 70)
+
+        relaxed_model = gurobi_model.copy()
+        relaxed_model.Params.OutputFlag = 0
+
+        # relaxobjtype=0 => minimize the sum of absolute relaxations.
+        # minrelax=False => solve the relaxation directly.
+        # vrelax=True => allow variable-bound relaxation.
+        # crelax=True => allow linear-constraint relaxation.
+        relaxed_model.feasRelaxS(
+            0,
+            False,
+            True,
+            True,
+        )
+        relaxed_model.optimize()
+
+        if relaxed_model.Status == GRB.OPTIMAL:
+            relaxation_terms = []
+
+            for variable in relaxed_model.getVars():
+                if not variable.VarName.startswith("Art"):
+                    continue
+
+                magnitude = abs(float(variable.X))
+                if magnitude <= 1e-12:
+                    continue
+
+                relaxation_terms.append(
+                    (
+                        magnitude,
+                        variable.VarName,
+                    )
+                )
+
+            relaxation_terms.sort(
+                key=lambda item: item[0],
+                reverse=True,
+            )
+
+            total_relaxation = sum(
+                magnitude
+                for magnitude, _ in relaxation_terms
+            )
+            maximum_relaxation = (
+                relaxation_terms[0][0]
+                if relaxation_terms
+                else 0.0
+            )
+
+            print(
+                "Minimum total absolute relaxation: "
+                f"{total_relaxation:.12g}",
+                flush=True,
+            )
+            print(
+                "Largest single relaxation: "
+                f"{maximum_relaxation:.12g}",
+                flush=True,
+            )
+            print(
+                "Non-zero relaxation terms: "
+                f"{len(relaxation_terms)}",
+                flush=True,
+            )
+
+            print()
+            print(
+                "Largest required relaxations "
+                "(ArtL=lower bound, ArtU=upper bound, "
+                "ArtP/ArtN=constraint RHS):",
+                flush=True,
+            )
+
+            if relaxation_terms:
+                for magnitude, name in relaxation_terms[:50]:
+                    print(
+                        f"  {name:60s} {magnitude:.12g}",
+                        flush=True,
+                    )
+            else:
+                print("  None above 1e-12.", flush=True)
+
+            relaxed_path = Path(
+                "stage_c1_fresh_feasrelax.lp"
+            ).resolve()
+            relaxed_model.write(str(relaxed_path))
+            print()
+            print(
+                f"Relaxed model written to: {relaxed_path}",
+                flush=True,
+            )
+        else:
+            print(
+                "Feasibility relaxation did not solve to optimality. "
+                f"Status={relaxed_model.Status}",
+                flush=True,
+            )
+
+        relaxed_model.dispose()
+
     except Exception as error:
         print()
         print(f"Unable to compute/write IIS: {error}")
