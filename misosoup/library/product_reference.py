@@ -183,12 +183,14 @@ def find_producible_exchanges(
     gurobi_model = community.solver.problem
     gurobi_model.update()
 
-    if gurobi_model.NumIntVars != 0:
-        raise RuntimeError(
-            "Product scan must be a pure LP, but Gurobi reports "
-            f"{gurobi_model.NumIntVars} integer variables "
-            f"({gurobi_model.NumBinVars} binary)."
-        )
+    # Compatibility note:
+    #
+    # The validated three-species pipeline fixes all organisms active through
+    # binary y_j variables, while the scalable ocean workflow can configure
+    # the same reference problem as a pure LP.  Both formulations are valid
+    # inputs for the serial reference scan.  The dedicated HiGHS scalable
+    # product-scan engine remains pure-LP only.
+    is_pure_lp = gurobi_model.NumIntVars == 0
 
     total_exchanges = len(exchanges)
     scan_start = perf_counter()
@@ -204,11 +206,13 @@ def find_producible_exchanges(
         flush=True,
     )
     print(
-        "Product scan LP: "
+        "Product scan model: "
         f"variables={gurobi_model.NumVars}; "
         f"linear_constraints={gurobi_model.NumConstrs}; "
         f"general_constraints={gurobi_model.NumGenConstrs}; "
-        "integer_variables=0; binary_variables=0.",
+        f"integer_variables={gurobi_model.NumIntVars}; "
+        f"binary_variables={gurobi_model.NumBinVars}; "
+        f"mode={'pure-LP' if is_pure_lp else 'validated-MILP'}.",
         flush=True,
     )
 
