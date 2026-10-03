@@ -4,9 +4,8 @@ import logging
 from time import perf_counter
 from typing import Callable
 
-from reframed.solvers.solution import Status
-
-from ..reframed.layered_community import BOUND_INF, LayeredCommunity
+from ..cobra.solver import Status
+from ..cobra.layered_community import BOUND_INF, LayeredCommunity
 
 
 def get_community_exchanges(community: LayeredCommunity) -> list:
