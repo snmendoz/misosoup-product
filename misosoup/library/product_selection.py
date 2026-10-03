@@ -1128,8 +1128,10 @@ def solvepFBAUsingFixProducts(
         flush=True,
     )
 
-    diagnostic_batch_size = 250
-
+    # Pinpoint diagnostic:
+    # - first 250 reactions are known feasible as a cumulative block;
+    # - from reaction 251 onward, solve after every newly-added pair of
+    #   epigraph constraints until the first infeasible reaction is found.
     for index, rid in enumerate(reaction_ids):
 
         absolute_name = absolute_variables[rid]
@@ -1157,48 +1159,76 @@ def solvepFBAUsingFixProducts(
         )
 
         completed = index + 1
-        batch_boundary = (
-            completed % diagnostic_batch_size == 0
+
+        # Check once at 250, then every reaction from 251 through 500.
+        # If all 251-500 remain feasible, continue every 25 reactions
+        # thereafter to avoid an excessive number of solves.
+        should_check = (
+            completed == 250
+            or (251 <= completed <= 500)
+            or (completed > 500 and completed % 25 == 0)
             or completed == len(reaction_ids)
         )
 
-        if batch_boundary:
+        if should_check:
             community.solver.update()
             print(
-                f"Stage C.3 diagnostic batch: constraints added through "
+                f"Stage C.3 pinpoint: constraints added through "
                 f"reaction {completed}/{len(reaction_ids)} "
-                f"({rid}). Checking feasibility...",
+                f"(index={index}, rid={rid}). Checking feasibility...",
                 flush=True,
             )
 
             if check_feasibility:
-                batch_solution = community.solver.solve(
+                pinpoint_solution = community.solver.solve(
                     objective={},
                     get_values=False,
                     minimize=True,
                 )
                 print(
-                    f"Stage C.3 batch {completed} status: "
-                    f"{batch_solution.status}.",
+                    f"Stage C.3 pinpoint {completed} status: "
+                    f"{pinpoint_solution.status}.",
                     flush=True,
                 )
 
-                if batch_solution.status != Status.OPTIMAL:
+                if pinpoint_solution.status != Status.OPTIMAL:
+                    previous_rid = (
+                        reaction_ids[index - 1]
+                        if index > 0
+                        else None
+                    )
                     print(
-                        f"First failing diagnostic batch ends at index "
-                        f"{completed - 1}, reaction {rid}.",
+                        "FIRST FAILING REACTION IDENTIFIED:",
+                        flush=True,
+                    )
+                    print(
+                        f"  index={index}",
+                        flush=True,
+                    )
+                    print(
+                        f"  reaction_number={completed}",
+                        flush=True,
+                    )
+                    print(
+                        f"  rid={rid}",
+                        flush=True,
+                    )
+                    print(
+                        f"  previous_rid={previous_rid}",
                         flush=True,
                     )
                     _raise_with_iis(
                         community=community,
                         stage_name=(
-                            "Stage C absolute-flux diagnostic batch "
-                            f"ending at reaction {completed}/{len(reaction_ids)}"
+                            "Stage C absolute-flux pinpoint at "
+                            f"reaction {completed}/{len(reaction_ids)} "
+                            f"({rid})"
                         ),
                         filename=(
-                            f"stage_c_abs_batch_{completed}_iis.ilp"
+                            f"stage_c_abs_pinpoint_{completed}_"
+                            f"{_safe_name(rid)}_iis.ilp"
                         ),
-                        status=batch_solution.status,
+                        status=pinpoint_solution.status,
                     )
 
     community.solver.update()
