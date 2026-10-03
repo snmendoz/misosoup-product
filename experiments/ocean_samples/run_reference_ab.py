@@ -7,7 +7,7 @@ import csv
 from pathlib import Path
 from time import perf_counter
 
-from reframed.solvers.solution import Status
+from misosoup.cobra.solver import Status
 
 from common import yaml_dump_atomic, yaml_load
 from misosoup.library.product_filter import (
@@ -24,7 +24,7 @@ from misosoup.library.product_selection import (
     getSelectedProductsFromProductMaximization,
     maximizeProducts,
 )
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 from staged_common import (
     get_sample,
     load_sample_models,
