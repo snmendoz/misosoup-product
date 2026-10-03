@@ -73,7 +73,7 @@ PRODUCT_JOB="$(sbatch --parsable \
   --partition="${OCEAN_PRODUCT_SCAN_PARTITION:-general}" \
   --cpus-per-task="${OCEAN_PRODUCT_SCAN_CPUS:-8}" \
   --mem="${OCEAN_PRODUCT_SCAN_MEM:-32G}" \
-  --time="${OCEAN_PRODUCT_SCAN_TIME:-12:00:00}" \
+  --time="${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}" \
   --array="$PRODUCT_ARRAY_SPEC" \
   --mail-user="$MAIL_USER" --mail-type=FAIL,END \
   --output="$OUTPUT_ROOT/logs/product_scan_%A_%a.out" \
@@ -154,7 +154,7 @@ ab_resources=${OCEAN_AB_CPUS:-2}CPU/${OCEAN_AB_MEM:-16G}
 c_resources=${OCEAN_C_CPUS:-2}CPU/${OCEAN_C_MEM:-32G}
 d_resources=${OCEAN_D_CPUS:-2}CPU/${OCEAN_D_MEM:-24G}
 qc_time=${OCEAN_QC_TIME:-12:00:00}
-product_scan_time=${OCEAN_PRODUCT_SCAN_TIME:-12:00:00}
+product_scan_time=${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}
 ab_time=${OCEAN_AB_TIME:-24:00:00}
 c_time=${OCEAN_C_TIME:-12:00:00}
 d_time=${OCEAN_D_TIME:-24:00:00}
@@ -171,7 +171,7 @@ echo "Stage D        : $D_JOB"
 echo "Collector      : $COLLECT_JOB"
 echo "Product array  : $PRODUCT_ARRAY_SPEC (no artificial throttle)"
 echo "Gurobi array   : $GUROBI_ARRAY_SPEC"
-echo "Walltimes      : QC=${OCEAN_QC_TIME:-12:00:00}; Product=${OCEAN_PRODUCT_SCAN_TIME:-12:00:00}; A+B=${OCEAN_AB_TIME:-24:00:00}; C=${OCEAN_C_TIME:-12:00:00}; D=${OCEAN_D_TIME:-24:00:00}; Collector=00:10:00"
+echo "Walltimes      : QC=${OCEAN_QC_TIME:-12:00:00}; Product=${OCEAN_PRODUCT_SCAN_TIME:-2-00:00:00}; A+B=${OCEAN_AB_TIME:-24:00:00}; C=${OCEAN_C_TIME:-12:00:00}; D=${OCEAN_D_TIME:-24:00:00}; Collector=00:10:00"
 echo "Output         : $OUTPUT_ROOT"
 echo "============================================================"
 echo "squeue -j $QC_JOB,$PRODUCT_JOB,$AB_JOB,$C_JOB,$D_JOB,$COLLECT_JOB"
