@@ -46,7 +46,7 @@ from reframed.solvers.solution import Status
 from reframed.solvers.solver import Parameter
 
 from misosoup.library.product_reference import (
-    constrain_full_community,
+    constrain_full_community_lp,
     find_producible_exchanges,
 )
 from misosoup.library.product_filter import (
@@ -212,23 +212,11 @@ community = LayeredCommunity(
 # REQUIRE ALL ORGANISMS TO BE PRESENT
 # ======================================================================
 #
-# constrain_full_community() creates the organism activity variables y_j
-# and imposes:
-#
-#     sum_j y_j = N
-#
-# Since every y_j is binary and there are N organisms:
-#
-#     y_j = 1  for every organism j
-#
-# MiSoSoup then requires:
-#
-#     growth_j >= MINIMAL_GROWTH
-#
-# for every active organism.
+# constrain_full_community_lp() keeps the Product Scan as a pure LP and
+# directly requires growth_j >= MINIMAL_GROWTH for every organism.
 # ======================================================================
 
-constrain_full_community(
+constrain_full_community_lp(
     community,
     minimal_growth=MINIMAL_GROWTH,
 )
