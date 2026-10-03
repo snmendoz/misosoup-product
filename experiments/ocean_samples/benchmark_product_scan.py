@@ -6,8 +6,7 @@ import argparse
 from pathlib import Path
 from time import perf_counter
 
-from reframed.solvers.solution import Status
-from reframed.solvers.solver import Parameter
+from misosoup.cobra.solver import Status, Parameter
 
 from common import (
     read_medium_spec,
@@ -21,7 +20,7 @@ from misosoup.library.product_reference import (
     get_community_exchanges,
 )
 from misosoup.library.readwrite import load_models
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 
 
 def parse_args() -> argparse.Namespace:
