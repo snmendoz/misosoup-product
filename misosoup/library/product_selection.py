@@ -1049,54 +1049,41 @@ def solvepFBAUsingFixProducts(
         positive_name = f"pfba_pos_{index}"
         negative_name = f"pfba_neg_{index}"
 
-        reaction = community.merged_model.reactions[rid]
+        # The split representation must use the CURRENT solver bounds,
+        # not the static CBModel bounds.  Earlier Stage-C setup can tighten or
+        # relax solver bounds directly (for example biomass and local exchange
+        # reactions), so using the stale model bounds can make an otherwise
+        # feasible problem infeasible.
+        gurobi_model = community.solver.problem
+        gurobi_model.update()
+        flux_variable = gurobi_model.getVarByName(rid)
 
-        # Use finite, reaction-aware bounds for the split variables.
-        #
-        # If:
-        #
-        #     lb_r <= v_r <= ub_r
-        #
-        # and:
-        #
-        #     v_r = v_r^+ - v_r^-
-        #
-        # then:
-        #
-        #     0 <= v_r^+ <= max(0, ub_r)
-        #     0 <= v_r^- <= max(0, -lb_r)
-        #
-        # Infinite model bounds are replaced with MiSoSoup's own
-        # practical bound convention, BOUND_INF=1000.
-        lower_bound = float(reaction.lb)
-        upper_bound = float(reaction.ub)
-
-        if math.isinf(lower_bound):
-            effective_lower = (
-                -BOUND_INF
-                if lower_bound < 0
-                else BOUND_INF
+        if flux_variable is None:
+            raise RuntimeError(
+                f"Unable to find Stage-C flux variable {rid}."
             )
-        else:
-            effective_lower = lower_bound
 
-        if math.isinf(upper_bound):
-            effective_upper = (
-                BOUND_INF
-                if upper_bound > 0
-                else -BOUND_INF
-            )
-        else:
-            effective_upper = upper_bound
+        lower_bound = float(flux_variable.LB)
+        upper_bound = float(flux_variable.UB)
 
-        positive_upper = max(
-            0.0,
-            effective_upper,
+        # Exact split-variable bounds:
+        #
+        #   v = v+ - v-
+        #   0 <= v+ <= max(0, ub)
+        #   0 <= v- <= max(0, -lb)
+        #
+        # Preserve true infinity instead of imposing an artificial 1000 cap;
+        # the pFBA minimization itself prevents gratuitous split flux.
+        positive_upper = (
+            GRB.INFINITY
+            if math.isinf(upper_bound) and upper_bound > 0
+            else max(0.0, upper_bound)
         )
 
-        negative_upper = max(
-            0.0,
-            -effective_lower,
+        negative_upper = (
+            GRB.INFINITY
+            if math.isinf(lower_bound) and lower_bound < 0
+            else max(0.0, -lower_bound)
         )
 
         community.solver.add_variable(
