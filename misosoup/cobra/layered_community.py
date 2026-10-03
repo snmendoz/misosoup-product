@@ -217,8 +217,13 @@ class LayeredCommunity:
         for org_id, org_model in self.organisms.items():
             org_var = f"y_{org_id}"
             for r_id, reaction in org_model.reactions.items():
+                is_exchange = bool(
+                    getattr(reaction, "is_exchange", False)
+                    or r_id.startswith("R_EX")
+                )
+
                 if (
-                    not r_id.startswith("R_EX")
+                    not is_exchange
                     and r_id != org_model.biomass_reaction
                     and reaction.lb * reaction.ub <= 0
                 ):
