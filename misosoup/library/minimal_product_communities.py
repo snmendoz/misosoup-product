@@ -455,10 +455,20 @@ def findMinimalProductCommunities(
             ]
         )
 
+    # Only request medium exchanges that actually exist in the merged
+    # community.  A medium can contain compounds absent from a particular
+    # community; setup_medium() warns and skips those reactions.  ReFramed's
+    # Gurobi backend cannot retrieve values for non-existent variable names.
+    available_medium_reactions = [
+        rid
+        for rid in medium
+        if rid in community.merged_model.reactions
+    ]
+
     values_to_get = (
         list(organism_variables.values())
         + selected_products
-        + list(medium.keys())
+        + available_medium_reactions
         + biomass_reactions
         + [community.merged_model.biomass_reaction]
     )
