@@ -23,7 +23,7 @@ from misosoup.library.product_filter import (
     filter_product_candidates,
 )
 from misosoup.library.product_reference import get_community_exchanges
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 from staged_common import (
     get_sample,
     load_sample_models,
