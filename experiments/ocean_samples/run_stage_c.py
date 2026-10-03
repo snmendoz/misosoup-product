@@ -8,7 +8,7 @@ from time import perf_counter
 
 from common import yaml_dump_atomic, yaml_load
 from misosoup.library.product_selection import solvepFBAUsingFixProducts
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 from staged_common import (
     get_sample,
     load_sample_models,
