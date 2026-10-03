@@ -42,8 +42,7 @@ from time import perf_counter
 
 import yaml
 
-from reframed.solvers.solution import Status
-from reframed.solvers.solver import Parameter
+from misosoup.cobra.solver import Status, Parameter
 
 from misosoup.library.product_reference import (
     constrain_full_community_lp,
@@ -65,7 +64,7 @@ from misosoup.library.readwrite import (
     load_models,
     read_compounds,
 )
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 
 
 # ======================================================================
