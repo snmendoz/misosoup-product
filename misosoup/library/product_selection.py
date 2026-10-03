@@ -1129,6 +1129,140 @@ def solvepFBAUsingFixProducts(
             flush=True,
         )
 
+        # Targeted diagnostic for the metabolite balance identified by the
+        # feasibility relaxation.  Print the exact Gurobi row, the C0 flux
+        # of every participating reaction, each stoichiometric contribution,
+        # and the resulting residual before any split-flux variables exist.
+        diagnostic_constraint_names = [
+            "glycogen1500_e_I3M07",
+            "M_glycogen1500_e_I3M07",
+        ]
+
+        diagnostic_constraint = None
+        diagnostic_name = None
+
+        for candidate_name in diagnostic_constraint_names:
+            candidate = community.solver.problem.getConstrByName(
+                candidate_name
+            )
+            if candidate is not None:
+                diagnostic_constraint = candidate
+                diagnostic_name = candidate_name
+                break
+
+        print()
+        print("=" * 70)
+        print("C0 TARGET BALANCE DIAGNOSTIC")
+        print("=" * 70)
+
+        if diagnostic_constraint is None:
+            print(
+                "Could not find the glycogen1500_e_I3M07 mass-balance "
+                "constraint in the Gurobi model.",
+                flush=True,
+            )
+        else:
+            gurobi_model = community.solver.problem
+            row = gurobi_model.getRow(diagnostic_constraint)
+
+            sense_symbol = {
+                "=": "=",
+                "<": "<=",
+                ">": ">=",
+            }.get(
+                diagnostic_constraint.Sense,
+                diagnostic_constraint.Sense,
+            )
+
+            print(
+                f"Constraint: {diagnostic_name}",
+                flush=True,
+            )
+            print(
+                f"Sense/RHS: {sense_symbol} "
+                f"{diagnostic_constraint.RHS:.12g}",
+                flush=True,
+            )
+            print()
+            print(
+                "Exact equation as stored by Gurobi:",
+                flush=True,
+            )
+
+            equation_terms = []
+            diagnostic_rows = []
+            lhs_value = 0.0
+
+            for term_index in range(row.size()):
+                coefficient = float(row.getCoeff(term_index))
+                variable = row.getVar(term_index)
+                flux_value = float(variable.X)
+                contribution = coefficient * flux_value
+                lhs_value += contribution
+
+                equation_terms.append(
+                    f"({coefficient:+.12g})*{variable.VarName}"
+                )
+                diagnostic_rows.append(
+                    (
+                        variable.VarName,
+                        coefficient,
+                        flux_value,
+                        contribution,
+                    )
+                )
+
+            print(
+                "  " + " ".join(equation_terms)
+                + f" {sense_symbol} {diagnostic_constraint.RHS:.12g}",
+                flush=True,
+            )
+
+            print()
+            print(
+                "C0 term-by-term evaluation:",
+                flush=True,
+            )
+            for (
+                variable_name,
+                coefficient,
+                flux_value,
+                contribution,
+            ) in diagnostic_rows:
+                print(
+                    f"  {variable_name:45s} "
+                    f"coeff={coefficient:+.12g} "
+                    f"flux={flux_value:+.12g} "
+                    f"contribution={contribution:+.12g}",
+                    flush=True,
+                )
+
+            residual = (
+                lhs_value
+                - float(diagnostic_constraint.RHS)
+            )
+
+            print()
+            print(
+                f"C0 LHS      = {lhs_value:+.12g}",
+                flush=True,
+            )
+            print(
+                f"C0 RHS      = "
+                f"{diagnostic_constraint.RHS:+.12g}",
+                flush=True,
+            )
+            print(
+                f"C0 residual = LHS - RHS = {residual:+.12g}",
+                flush=True,
+            )
+            print(
+                f"|residual|  = {abs(residual):.12g}",
+                flush=True,
+            )
+            print("=" * 70)
+            print()
+
     # --------------------------------------------------------------
     # Add classical split-flux variables.
     # --------------------------------------------------------------
