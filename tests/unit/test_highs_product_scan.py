@@ -9,7 +9,7 @@ from misosoup.library.highs_product_scan import (
     ProductScanLP,
     run_parallel_product_scan,
 )
-from misosoup.reframed.layered_community import LayeredCommunity
+from misosoup.cobra.layered_community import LayeredCommunity
 
 
 def _tiny_lp():
